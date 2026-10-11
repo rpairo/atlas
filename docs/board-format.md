@@ -85,7 +85,7 @@ and when an edit makes the saved columns impossible Atlas moves as few nodes as 
 nodes after the conflict forward, or pulling the ones before it back). A new node takes the column
 after its inputs, or a new column of its own. Edits still move nodes when the edges demand it
 (reversing an edge, or adding one that makes a chain longer); inside each lane the order is kept.
-`reorderAll()` lays the columns out afresh. Declare flow lanes when nodes must stay where they are.
+`reorder()` lays the columns out afresh. Declare flow lanes when nodes must stay where they are.
 
 **With flow lanes**, every node should declare its lane. A node without one goes to a visible
 *Unassigned* lane at the end, with an `unassigned` warning. Atlas never guesses a lane from the
@@ -107,7 +107,7 @@ edges.
 | `lane` | lane id | The lane or band the node belongs to. |
 | `group` | group id | The group it belongs to. |
 | `type` | string | Your own category. A value matching `[A-Za-z0-9_-]{1,32}` also adds the CSS part `node-<type>`. |
-| `pinned` | `true` or `false` | `reorderAll()` leaves this node where it is. |
+| `pinned` | `true` or `false` | `reorder()` leaves this node where it is. |
 | `layer` | whole number | On a board without flow lanes, the node's column, saved by Atlas after every load and edit so that the drawing stays stable; only the order of the numbers matters, and gaps are fine. Ignored in bands and on boards with flow lanes (and kept there). A value that is not a whole number is your own data: it is kept, ignored for placement, and reported with an `ignored` warning. |
 
 ## Edges
@@ -181,7 +181,7 @@ what the reader already knows. Where a node goes is decided by, highest first:
 2. **constraints**: groups together, then `before`, `first` and `last`;
 3. the **sketch**;
 4. **relations**: inside each lane, the order with the fewest crossings. This applies when a board
-   is tidied the first time, when `reorderAll()` runs, and when a new node chooses its gap;
+   is tidied the first time, when `reorder()` runs, and when a new node chooses its gap;
 5. **balance**: every flow lane spans as many rows as the longest one, and shorter lanes place
    their nodes next to the nodes they connect to, so wires run straight.
 

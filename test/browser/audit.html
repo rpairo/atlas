@@ -25,7 +25,7 @@ try {
   // Atlas's light defaults even when the system is dark.
   if (q.get("hostvars")) {
     document.documentElement.setAttribute("style", "--paper:#fbf7ef;--sheet:#fffdf8;--ink:#201a10;--rule:#d9cdb8");
-    host.setAttribute("style", "--atlas-paper:var(--paper);--atlas-sheet:var(--sheet);--atlas-ink:var(--ink);--atlas-rule:var(--rule)");
+    host.setAttribute("style", "--atlas-paper:var(--paper);--atlas-surface:var(--sheet);--atlas-ink:var(--ink);--atlas-rule:var(--rule)");
     host.setAttribute("theme", "light");
   }
   // offset=N: the map starts N px down the page (a header above it, as on most sites).
@@ -41,7 +41,7 @@ try {
   }
   // theme=dark or theme=light: a forced theme, whatever the system's.
   if (q.get("theme")) host.setAttribute("theme", q.get("theme"));
-  const map = new Atlas(host, { document: text, animate: false });
+  const map = new Atlas(host, { animate: false }).load(text);
   document.body.dataset.stage = "constructed";
   // Headless Chrome stops producing frames when nothing changes; wait with a timer instead.
   await new Promise(r => setTimeout(r, 100));
@@ -134,7 +134,7 @@ try {
   res.covered = [];
   if (wrap.dataset.panel === "sheet") {
     map.select(ids[0], { focus: false, animate: false });
-    map.openDetail(true);
+    map.toggleDetail(true);
     const panel = map.root.querySelector(".panel");
     panel.style.marginTop = "-160px";
     const r = panel.getBoundingClientRect();
@@ -143,7 +143,7 @@ try {
       if (hit && !panel.contains(hit)) res.covered.push(`${Math.round(x)},${Math.round(y)}: ${hit.className?.baseVal ?? hit.className}`);
     }
     panel.style.marginTop = "";
-    map.openDetail(false);
+    map.toggleDetail(false);
   }
   if (wrap.dataset.panel === "below") {
     map.select(ids[0], { focus: false, animate: false });
@@ -225,7 +225,7 @@ try {
     map.updateNode(p, { subtitle: "audit" });
     map.undo();
   } catch (e) { res.behaviour.push(`map broken after a refused rename: ${e.message}`); }
-  map.connect(p, p);
+  map.addEdge({ from: p, to: p });
   const self = map.warnings.some(w => w.code === "self");
   map.select(p, { focus: false, animate: false, announce: true });
   if (!map._status.textContent.includes(map.labels.selfLoop)) res.behaviour.push(`the summary of a node that feeds itself does not say so (${map._status.textContent})`);
@@ -344,7 +344,7 @@ try {
       const ins = [...new Set(m0.edges.filter(e => e.to === hub && e.from !== hub).map(e => e.from))];
       const outs = [...new Set(m0.edges.filter(e => e.from === hub && e.to !== hub).map(e => e.to))];
       for (const [key, want] of [["ArrowDown", [...ins, ...outs]], [leftFlow ? "ArrowLeft" : "ArrowRight", outs], [leftFlow ? "ArrowRight" : "ArrowLeft", ins]]) {
-        map.select(hub, { animate: false });
+        map.select(hub, { focus: true, animate: false });
         let at = hub;
         const seen = [];
         for (let k = 0; k < want.length; k++) {
@@ -361,7 +361,7 @@ try {
       }
       // Escape: back to the selection from a connection, then the selection is cleared.
       if (ins.length + outs.length) {
-        map.select(hub, { animate: false });
+        map.select(hub, { focus: true, animate: false });
         const there = press(hub, "ArrowDown");
         const back = press(there, "Escape", false);
         if (back !== hub || map.selected !== hub) res.behaviour.push(`Escape from ${there} went to ${back} (selected ${map.selected})`);
@@ -370,7 +370,7 @@ try {
         // The detail lists the neighbours in the order of the steps.
         map.select(hub, { focus: false, animate: false });
         const listed = [...map.root.querySelectorAll(".panel .rel button .rt")].map(x => x.textContent);
-        const stepsOrder = map._star(hub).all.map(x => map.node(x.id)?.title ?? x.id);
+        const stepsOrder = map._neighbours(hub).all.map(x => map.node(x.id)?.title ?? x.id);
         const firstEach = [...map.root.querySelectorAll(".panel .rel")].flatMap(r => [...new Set([...r.querySelectorAll("button .rt")].map(x => x.textContent))]);
         if (firstEach.join("|") !== stepsOrder.join("|")) res.behaviour.push(`the detail of ${hub} lists ${firstEach.slice(0, 4).join(", ")}; the keys step ${stepsOrder.slice(0, 4).join(", ")}`);
       }
@@ -379,12 +379,12 @@ try {
     // Every step says "n of N": the n-th step's description has its position and the total.
     const hub = live.find(x => m0.edges.filter(e => e.to === x && e.from !== x).length >= 2);
     if (hub) {
-      map.select(hub, { animate: false });
-      const total = map._star(hub).all.length;
+      map.select(hub, { focus: true, animate: false });
+      const total = map._neighbours(hub).all.length;
       let at = hub;
       for (let k = 1; k <= Math.min(total, 4); k++) {
         at = press(at, "ArrowDown");
-        const n = map._star(hub).in.length;
+        const n = map._neighbours(hub).in.length;
         const want = k <= n ? `${k} of ${n}` : `${k - n} of ${total - n}`;
         if (!desc(at).includes(want)) res.behaviour.push(`step ${k} from ${hub} is described as "${desc(at)}", not "${want}"`);
       }
@@ -404,10 +404,10 @@ try {
   };
   for (const id of live) {
     scrollTo(0, 0); map._boardWrap.scrollLeft = 0;
-    map.select(id, { animate: false });
+    map.select(id, { focus: true, animate: false });
     if (!seen(id)) res.hidden.push(`select ${id} (${where})`);
     for (const key of Object.keys(arrows)) {
-      map.select(id, { animate: false });
+      map.select(id, { focus: true, animate: false });
       map._els.get(id).dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, composed: true }));
       const to = map._idOf.get(map.root.activeElement);
       if (to !== undefined && to !== id && !seen(to)) res.hidden.push(`${key} from ${id} to ${to} (${where})`);
@@ -423,30 +423,30 @@ try {
       const someone = ids.find(x => model.edges.some(e => e.from === x || e.to === x));   // ids of the board as loaded
       const host9 = document.createElement("div"); document.querySelector("main").append(host9);
       scrollTo(0, 0);
-      const m9 = new Atlas(host9, { document: text, selected: someone, animate: false });
+      const m9 = new Atlas(host9, { animate: false }).load(text, { selected: someone });
       await new Promise(r => setTimeout(r, 100));
       const p9 = m9.root.querySelector(".panel"), t9 = () => m9.root.querySelector(".p-toggle");
-      const sh = m9.arrangement;
-      if (sh.panel !== "sheet" || sh.sheet !== "peek" || p9.dataset.sheet !== "peek") res.behaviour.push(`a map starting with a selection shows the detail as ${JSON.stringify(sh)}`);
+      const sheet = () => p9.dataset.sheet;
+      if (m9._wrap.dataset.panel !== "sheet" || sheet() !== "peek") res.behaviour.push(`a map starting with a selection shows the detail as ${m9._wrap.dataset.panel} ${sheet()}`);
       if (p9.getBoundingClientRect().height > 56) res.behaviour.push(`the folded sheet is ${Math.round(p9.getBoundingClientRect().height)}px tall`);
       if (scrollY !== 0) res.behaviour.push(`building the map scrolled the page to ${scrollY}`);
       if (!t9() || t9().getBoundingClientRect().height < 44) res.behaviour.push("the sheet's toggle is missing or under 44px tall");
       if (getComputedStyle(m9.root.querySelector(".p-body")).visibility !== "hidden") res.behaviour.push("the folded sheet's body can take focus");
       t9().click();
       const limit = Math.min(Math.max(0.42 * innerHeight, 280), innerHeight - 120);
-      if (m9.arrangement.sheet !== "open" || t9().getAttribute("aria-expanded") !== "true") res.behaviour.push("the toggle did not open the sheet");
+      if (sheet() !== "open" || t9().getAttribute("aria-expanded") !== "true") res.behaviour.push("the toggle did not open the sheet");
       if (p9.getBoundingClientRect().height > limit + 2) res.behaviour.push(`the open sheet is ${Math.round(p9.getBoundingClientRect().height)}px tall, over ${Math.round(limit)}`);
       const nb = m9._els.get(someone).getBoundingClientRect(), pt = p9.getBoundingClientRect().top;
       if (nb.bottom > pt - 11) res.behaviour.push(`opening the sheet left ${someone} under it (${Math.round(nb.bottom)} > ${Math.round(pt)})`);
       const other = ids.find(x => x !== someone);
       m9.select(other, { focus: false, animate: false });
-      if (m9.arrangement.sheet !== "open") res.behaviour.push("the sheet folded when another node was selected");
+      if (sheet() !== "open") res.behaviour.push("the sheet folded when another node was selected");
       // Escape in the open sheet folds it and goes back to the selected node.
       t9().focus();
       t9().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true, cancelable: true }));
-      if (m9.arrangement.sheet !== "peek" || m9._idOf.get(m9.root.activeElement) !== other) res.behaviour.push(`Escape in the open sheet left it ${m9.arrangement.sheet}, focus on ${m9.root.activeElement?.className}`);
+      if (sheet() !== "peek" || m9._idOf.get(m9.root.activeElement) !== other) res.behaviour.push(`Escape in the open sheet left it ${sheet()}, focus on ${m9.root.activeElement?.className}`);
       m9._els.get(other).click();
-      if (m9.arrangement.sheet !== "open") res.behaviour.push("activating the selected node again did not open the sheet");
+      if (sheet() !== "open") res.behaviour.push("activating the selected node again did not open the sheet");
       m9.destroy(); host9.remove(); scrollTo(0, 0);
     } catch (e) { res.behaviour.push(`sheet check threw ${e.name}: ${e.message}`); }
   }
@@ -458,11 +458,11 @@ try {
     if (ul && getComputedStyle(ul).listStyleType !== "disc") res.behaviour.push(`detail bullets are ${getComputedStyle(ul).listStyleType}`);
     map.select(null, { focus: false });
   }
-  const dry = map.reorderAll({ dryRun: true }), revBefore = map.rev;
-  const done = map.reorderAll();
-  if (dry.swaps !== done.swaps || dry.layers !== done.layers) res.behaviour.push(`reorderAll counted ${JSON.stringify(dry)} in a dry run and ${JSON.stringify(done)} for real`);
-  if ((done.swaps + done.layers === 0) !== (map.rev === revBefore)) res.behaviour.push("reorderAll changed the revision without changing the order, or the reverse");
-  if (done.swaps + done.layers) map.undo();
+  const dry = map.reorder({ dryRun: true }), revBefore = map.rev;
+  const done = map.reorder();
+  if (dry !== done) res.behaviour.push(`reorder counted ${dry} in a dry run and ${done} for real`);
+  if ((done === 0) !== (map.rev === revBefore)) res.behaviour.push("reorder changed the revision without changing the order, or the reverse");
+  if (done) map.undo();
   // Presentation: dimmed nodes keep readable text, long unbroken text wraps instead of overflowing,
   // and inline the detail sits inside the selected node's <li> (an <ol> holds only <li>s).
   try {
@@ -544,7 +544,7 @@ try {
     const name = map._board.getAttribute("aria-label"), role = map._board.getAttribute("role");
     if (role !== "region" || name !== "Audit board") res.behaviour.push(`the board is not a region named after its title (${role}, ${name})`);
     const [ea, eb] = ["p1", "p2"];
-    map.connect(ea, eb, { id: "audit_why", details: "because of the audit" });
+    map.addEdge({ id: "audit_why", from: ea, to: eb, details: "because of the audit" });
     map.select(eb, { focus: false, animate: false });
     const panelEl = map.root.querySelector(".panel");
     if (!panelEl.getAttribute("aria-label")) res.behaviour.push("the detail panel has no accessible name");
@@ -557,7 +557,7 @@ try {
     map.clearHistory();
     if (map.canUndo || map.canRedo) res.behaviour.push("clearHistory() left steps");
     const host4 = document.createElement("div"); document.body.append(host4);
-    const m4 = new Atlas(host4, { document: { nodes: [{ id: "a" }] }, animate: false, historyLimit: 2 });
+    const m4 = new Atlas(host4, { animate: false, historyLimit: 2 }).load({ nodes: [{ id: "a" }] });
     for (let i = 0; i < 5; i++) m4.updateNode("a", { title: "t" + i });
     let undos = 0; while (m4.undo()) undos++;
     if (undos !== 2) res.behaviour.push(`historyLimit 2 kept ${undos} steps`);
@@ -565,7 +565,7 @@ try {
     // Headings fit the page's outline: lane titles and the detail's title at headingLevel (2 by
     // default), the detail's relations one below.
     const host6 = document.createElement("div"); document.body.append(host6);
-    const m6 = new Atlas(host6, { document: { lanes: [{ id: "L", title: "L" }], nodes: [{ id: "a", lane: "L" }, { id: "b", lane: "L" }], edges: [{ from: "a", to: "b" }] }, animate: false, headingLevel: 4 });
+    const m6 = new Atlas(host6, { animate: false, headingLevel: 4 }).load({ lanes: [{ id: "L", title: "L" }], nodes: [{ id: "a", lane: "L" }, { id: "b", lane: "L" }], edges: [{ from: "a", to: "b" }] });
     m6.select("a", { focus: false, animate: false });
     const tags = [m6.root.querySelector(".lane-title")?.tagName, m6.root.querySelector(".p-title")?.tagName, m6.root.querySelector(".r-title")?.tagName].join(",");
     if (tags !== "H4,H4,H5") res.behaviour.push(`headingLevel 4 gave ${tags}`);
@@ -576,23 +576,23 @@ try {
   addEventListener("unhandledrejection", e => rejections.push(String(e.reason?.message ?? e.reason)));
   const host2 = document.createElement("div");
   document.body.append(host2);
-  const m2 = new Atlas(host2, { document: text, animate: true });
+  const m2 = new Atlas(host2, { animate: true }).load(text);
   m2.addNode({ id: "audit_late", title: "Late" }, { edges: [{ from: ids[1], to: "audit_late" }] });
   m2.destroy();
   await new Promise(r => setTimeout(r, 1500));
   if (rejections.length) res.behaviour.push(`destroy() during a transition: ${rejections[0]}`);
   host2.remove();
-  // reorderAll() never moves a pinned node, also when groups are enforced again after it.
+  // reorder() never moves a pinned node, also when groups are enforced again after it.
   try {
     const host3 = document.createElement("div");
     document.body.append(host3);
     const pb = await (await fetch("../fixtures/pinned-groups.json")).text();
-    const m3 = new Atlas(host3, { document: pb, animate: false });
+    const m3 = new Atlas(host3, { animate: false }).load(pb);
     const lanesBefore = new Map([...m3._layout.order].map(([l, ids]) => [l, [...ids]]));
-    m3.reorderAll();
+    m3.reorder();
     const pins = JSON.parse(pb).nodes.filter(n => n.pinned).map(n => n.id);
     for (const [l, ids] of lanesBefore) for (const p of pins) {
-      if (ids.includes(p) && m3._layout.order.get(l).indexOf(p) !== ids.indexOf(p)) res.behaviour.push(`reorderAll moved pinned ${p} in lane ${l}`);
+      if (ids.includes(p) && m3._layout.order.get(l).indexOf(p) !== ids.indexOf(p)) res.behaviour.push(`reorder moved pinned ${p} in lane ${l}`);
     }
     m3.destroy();
     host3.remove();
@@ -601,7 +601,7 @@ try {
   // than its document (the position is counted in drawn order).
   try {
     const host5 = document.createElement("div"); document.body.append(host5);
-    const m5 = new Atlas(host5, { animate: false, document: { lanes: [{ id: "L" }], groups: [{ id: "g" }], nodes: [{ id: "a", lane: "L" }, { id: "b", lane: "L" }, { id: "c", lane: "L", group: "g" }] } });
+    const m5 = new Atlas(host5, { animate: false }).load({ lanes: [{ id: "L" }], groups: [{ id: "g" }], nodes: [{ id: "a", lane: "L" }, { id: "b", lane: "L" }, { id: "c", lane: "L", group: "g" }] });
     m5.addConstraint({ type: "last", node: "a" });
     const before5 = m5._layout.order.get("L").join(",");
     m5.addNode({ id: "d", lane: "L", group: "g" });
@@ -645,11 +645,25 @@ try {
     const outcome = await bad.ready.then(() => "loaded", () => "failed");
     if (outcome !== "failed") res.behaviour.push("ready resolved for an invalid inline board");
     if (!heard) res.behaviour.push("an inline board's atlas-error fired before the page could listen");
-    if (!bad.error?.errors?.length) res.behaviour.push("element.error is empty after a failed load");
+    const why = await bad.ready.catch(e => e);
+    if (!why?.errors?.length) res.behaviour.push("element.ready rejected without its errors");
     bad.remove();
     const realFetch = window.fetch;
     window.fetch = (url, opts) => String(url).includes("slow=1")
       ? new Promise(r => setTimeout(r, 300)).then(() => realFetch(url, opts)) : realFetch(url, opts);
+    const selects = [];
+    const el2 = document.createElement("atlas-map");
+    el2.innerHTML = '<script type="application/json">{"nodes":[{"id":"a"},{"id":"b"}]}<\/script>';
+    el2.addEventListener("atlas-select", e => selects.push(e.detail.id));
+    document.body.append(el2);
+    await el2.ready;
+    el2.atlas.select("b");
+    if (selects.at(-1) !== "b") res.behaviour.push("<atlas-map> did not send atlas-select");
+    const first = el2.atlas;
+    first.destroy(); el2.remove();
+    document.body.append(el2);
+    if (await el2.ready === first) res.behaviour.push("after destroy() and reinsertion, ready gave the destroyed map");
+    el2.atlas.destroy(); el2.remove();
     const raced = document.createElement("atlas-map");
     document.body.append(raced);
     raced.setAttribute("src", "../../examples/incident-response/board.json?slow=1");
@@ -667,12 +681,72 @@ try {
     if (raced.atlas.destroyed || !raced.shadowRoot.querySelector(".node")) res.behaviour.push("a destroyed <atlas-map> stays empty when inserted again");
     raced.remove();
   } catch (e) { res.behaviour.push(`element check threw ${e.name}: ${e.message}`); }
+  // The 0.5 API: batch() hands over the map itself and its edits are one step; reads inside see
+  // them; an error inside changes nothing; undo() is refused inside; edits return the map; events
+  // come from the instance only; an unknown id selects nothing; a bad status is refused; the old
+  // names still work.
+  res.api = [];
+  try {
+    const hostA = document.createElement("div"); document.querySelector("main").append(hostA);
+    let onHost = 0; hostA.addEventListener("atlas-change", () => onHost++);
+    const a = new Atlas(hostA, { animate: false }).load({ lanes: [{ id: "L" }], nodes: [{ id: "x", lane: "L" }, { id: "y", lane: "L" }] });
+    const rev0 = a.rev;
+    let seen = null;
+    const back = a.batch(m => { seen = m; m.addNode({ id: "z", lane: "L" }).addEdge({ from: "x", to: "z" }); if (!m.node("z")) res.api.push("inside a batch, a read does not see the batch's edits"); });
+    if (seen !== a || back !== a) res.api.push("batch() did not hand over and return the map");
+    if (a.rev !== rev0 + 1) res.api.push(`a batch made ${a.rev - rev0} steps`);
+    a.undo();
+    if (a.node("z") || a.edges("x").length) res.api.push("one undo did not take the whole batch back");
+    try { a.batch(m => { m.addNode({ id: "w", lane: "L" }); m.removeNode("nope"); }); } catch { /* refused */ }
+    if (a.node("w")) res.api.push("a batch that failed half way left its first edits");
+    let refused = false;
+    try { a.batch(m => m.undo()); } catch (e) { refused = e.name === "AtlasError"; }
+    if (!refused) res.api.push("undo() inside a batch was not refused");
+    // A batch inside a batch that fails takes back its own part only; select() inside waits for the
+    // end; reads inside see nodes added in it, last in reading order.
+    a.updateNode("y", { title: "Y" });
+    a.batch(m => {
+      m.addNode({ id: "kept", lane: "L" });
+      try { m.batch(n => { n.addEdge({ from: "x", to: "y" }); n.removeNode("nope"); }); } catch { /* its part goes */ }
+      m.addNode({ id: "late", title: "yy", lane: "L" }, { after: "x" }).select("late");
+      if (m.find("y").join() !== "y,late") res.api.push(`inside a batch find() gave ${m.find("y")}`);
+    });
+    if (!a.node("kept") || a.edges("x").some(e => e.to === "y")) res.api.push("a failed inner batch did not take back exactly its own part");
+    if (a.selected !== "late") res.api.push(`select() inside a batch, of a node added in it, selected ${a.selected}`);
+    const order = a.toJSON().nodes.map(n => n.id);
+    if (order.indexOf("late") !== order.indexOf("x") + 1) res.api.push(`addNode(…, { after: "x" }) put it at ${order}`);
+    // An edit that removes a marked node says so with a mark event.
+    let marks = null;
+    a.addEventListener("mark", e => { marks = e.detail.ids; });
+    a.mark(["kept", "late"]);
+    a.removeNode("kept");
+    if (marks?.join() !== "late") res.api.push(`removing a marked node sent marks ${marks}`);
+    const labels = a.labels;
+    try { a.labels = {}; } catch { /* read-only */ }
+    if (a.labels !== labels || !Object.isFrozen(labels)) res.api.push("labels could be replaced or changed");
+    if (onHost) res.api.push(`a plain host heard ${onHost} atlas-change events (only <atlas-map> sends them)`);
+    a.select("y");
+    a.select("nope");
+    if (a.selected !== "y") res.api.push(`select() of an unknown id changed the selection to ${a.selected}`);
+    let bad = false;
+    try { a.setState("y", { status: "Down Now" }); } catch (e) { bad = e.name === "AtlasError"; }
+    if (!bad) res.api.push("setState() accepted a status that cannot be a part name");
+    if (typeof a.toggleDetail(true) !== "boolean") res.api.push("toggleDetail() does not return a boolean");
+    // The names deprecated in 0.5.0 keep working until 0.6.0.
+    const warn = console.warn; console.warn = () => {};
+    try {
+      a.connect("x", "y"); a.disconnect({ from: "x", to: "y" });
+      if (a.edges("x").length) res.api.push("connect() then disconnect() left an edge");
+      if (typeof a.reorderAll({ dryRun: true }).swaps !== "number" || a.openDetail(false) !== "peek" || !a.export().nodes) res.api.push("an old name stopped working");
+    } finally { console.warn = warn; }
+    a.destroy(); hostA.remove();
+  } catch (e) { res.api.push(`api check threw ${e.name}: ${e.message}`); }
   // Motion, on an animated map (deterministic: animations are paused and moved to a time).
   res.motion = [];
   try {
     const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
     const hostM = document.createElement("div"); document.querySelector("main").append(hostM);
-    const fresh = (opts = {}) => { hostM.replaceChildren(); const h = document.createElement("div"); hostM.append(h); return new Atlas(h, { document: text, animate: true, ...opts }); };
+    const fresh = (opts = {}) => { hostM.replaceChildren(); const h = document.createElement("div"); hostM.append(h); const { selected, ...rest } = opts; return new Atlas(h, { animate: true, ...rest }).load(text, { selected }); };
     const anims = m => [...m._animations];
     const at = (m, ms) => { for (const a of anims(m)) { a.pause(); a.currentTime = ms; } };
     // Positions inside the map (a scroll of the whole page, or a page scroll bar coming or going,
@@ -788,10 +862,22 @@ try {
         }
       }
     } else {
+      // Everything that moves on the board, the cues included (they are not the edit's motion).
+      const onBoard = m => m._board.getAnimations({ subtree: true }).filter(a => a.playState === "running" || a.playState === "pending");
       shove(m);
-      const travel = anims(m).filter(a => a.effect.getKeyframes().some(k => k.transform && k.transform !== "none"));
+      const travel = onBoard(m).filter(a => a.effect.getKeyframes?.().some(k => k.transform && k.transform !== "none"));
       if (travel.length) res.motion.push(`under reduced motion an edit moved ${travel.length} things`);
-      m.settle(); m.undo(); m.settle();
+      if (!onBoard(m).length) res.motion.push("under reduced motion an edit gave no cue");
+      m.settle();
+      if (onBoard(m).length) res.motion.push(`settle() left ${onBoard(m).length} reduced-motion cues running`);
+      m.undo(); m.settle();
+    }
+    {
+      // The page's own animations on the map (a status that blinks forever) are not settle()'s.
+      const blink = m.root.querySelector(".node").animate([{ opacity: 1 }, { opacity: .5 }], { duration: 400, iterations: Infinity });
+      try { m.settle(); } catch (e) { res.motion.push(`settle() threw ${e.name} on an endless page animation`); }
+      if (blink.playState !== "running") res.motion.push("settle() stopped the page's own animation");
+      blink.cancel();
     }
     // The detail panel opening below the board does not cut the wires being traced, and a map built
     // with a selection traces it.

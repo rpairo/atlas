@@ -33,7 +33,7 @@
   const direction = q.get("direction");
   if (direction) doc.meta = { ...doc.meta, direction };
   document.getElementById("title").textContent = doc.meta?.title ?? "Atlas";
-  window.atlas = new Atlas(document.getElementById("host"), { document: doc });
+  window.atlas = new Atlas(document.getElementById("host")).load(doc);
 </script>
 </body>
 </html>

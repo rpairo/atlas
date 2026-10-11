@@ -54,14 +54,14 @@ once would need the polynomial ordering of Wybrow et al. (2009) or Hegemann & Wo
 ## Animation
 
 Edits animate in stages, exit → move → enter (Bach et al., GraphDiaries; Crnovrsanin et al. 2020),
-each skipped when empty, with FLIP on the Web Animations API (`src/motion.js` plans, `atlas.js`
-plays). Every position is read before any animation starts: reading after a write makes the browser
+each skipped when empty, with FLIP on the Web Animations API (`src/motion.js` holds the timings,
+`atlas.js` plays). Every position is read before any animation starts: reading after a write makes the browser
 lay the page out again, once per node, which froze Chrome for 200 ms on 300 nodes. The exit takes
 150 ms and the enter 200 ms (Material: exits shorter than entrances); a move lasts
 `clamp(250, 150 + 20·√D, 700)` ms for its longest travel D, so longer travel takes longer and an edit
-and its undo take the same time. When at least three nodes change lane and three change row, the
-move runs along the flow first, then across it (staging, Heer and Robertson 2007), instead of every
-node cutting diagonally through the others. There is no per-node stagger: Chevalier, Dragicevic and
+and its undo take the same time. The move is one stage: running it along the flow first, then
+across it (staging, Heer and Robertson 2007), doubled the longest moves to 1.4 s and kept wires from
+reshaping with their nodes, for no measured gain. There is no per-node stagger: Chevalier, Dragicevic and
 Franconeri (2014) found it of no help for tracking. Lane titles and group boxes move with their
 nodes. A move cut by another edit continues from where the nodes are seen.
 

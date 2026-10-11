@@ -14,7 +14,7 @@ file, an API response, another team's repository.
   `prototype` keys through, and those names are refused as ids.
 - **Bounded work.** Documents over 512 KB and boards over the [limits](board-format.md#limits)
   are rejected before any placement or routing runs. Placement uses bounded iterations, and the
-  routing search stops at a fixed amount of work (`ROUTE.budget`), so one selection cannot freeze
+  routing search stops at a fixed amount of work (a budget in `src/route.js`), so one selection cannot freeze
   the page.
 - **Validated edits.** Every edit validates the whole board, and a failing batch leaves it
   untouched.

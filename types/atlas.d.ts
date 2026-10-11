@@ -1,7 +1,7 @@
 // Type declarations for @rpairo/atlas. Hand-written; they describe dist/atlas.js.
 //
-// Everything marked @experimental (layout, bestInsertion, inversions, route, demand, ROUTE and
-// their types) is outside the SemVer guarantee: it may change in any minor release.
+// Members marked @deprecated still work, with a console warning the first time, and are removed
+// in 0.6.0; each note says what replaces it.
 
 /// <reference lib="dom" />
 
@@ -55,7 +55,7 @@ export interface Node {
   group?: string;
   /** Becomes the CSS part `node-<type>` when it matches `^[A-Za-z0-9_-]{1,32}$`. */
   type?: string;
-  /** Pinned nodes keep their place in `reorderAll()`. */
+  /** Pinned nodes keep their place in `reorder()`. */
   pinned?: boolean;
   /**
    * The node's column on a board without flow lanes (a whole number from 0), written by Atlas so
@@ -98,46 +98,26 @@ export interface Board {
   [key: string]: unknown;
 }
 
-/** A board as `serialize()` and `Atlas#toJSON()` write it: empty optional lists are left out. */
-export interface SavedBoard extends Board {
-  format: typeof FORMAT;
-  meta: ModelMeta;
-  nodes: Node[];
-  edges: ModelEdge[];
-}
-
-// ---------------------------------------------------------------------------------------------
-// The canonical model (what normalize() and load() return and the edit functions work on).
-
-export interface ModelMeta extends Meta {
-  direction: Direction;
-}
-
-export interface ModelLane extends Lane {
+/** A lane as Atlas saves it: always with its kind. */
+export interface SavedLane extends Lane {
   kind: LaneKind;
 }
 
-export interface ModelEdge extends Edge {
+/** An edge as Atlas saves and returns it: always with its id. */
+export interface SavedEdge extends Edge {
   id: string;
 }
 
 /**
- * The canonical board: every list present, every lane with a kind, every edge with an id, and
- * unknown top-level fields kept aside in `extra` so that `serialize()` gives them back.
- * Build it with `normalize()` or `load()`, never by hand, and do not pass it back to them.
+ * A board as Atlas saves it (`toJSON()`, `apply()`): canonical, with its defaults written out and
+ * unknown fields kept; empty optional lists are left out. It loads again exactly as it is.
  */
-export interface Model {
-  /** As found in the input (`FORMAT` when absent); `validate()` accepts only `"atlas/1"`. */
-  format: string;
-  meta: ModelMeta;
-  lanes: ModelLane[];
-  groups: Group[];
+export interface SavedBoard extends Board {
+  format: typeof FORMAT;
+  meta: Meta & { direction: Direction };
+  lanes?: SavedLane[];
   nodes: Node[];
-  edges: ModelEdge[];
-  constraints: Constraint[];
-  edgeTypes: Record<string, unknown>;
-  nodeTypes: Record<string, unknown>;
-  extra: Record<string, unknown>;
+  edges: SavedEdge[];
 }
 
 /** One problem: a JSON-path-like `path`, a stable `code` and a readable `message`. */
@@ -154,11 +134,6 @@ export interface ValidationResult {
   warnings: Finding[];
 }
 
-export interface LoadResult {
-  model: Model;
-  warnings: Finding[];
-}
-
 /** Ids added, removed or changed in one list. */
 export interface Delta {
   added: string[];
@@ -166,7 +141,7 @@ export interface Delta {
   changed: string[];
 }
 
-/** What changed between two models, by id. */
+/** What changed between two boards, by id. */
 export interface Diff {
   nodes: Delta;
   edges: Delta;
@@ -218,7 +193,7 @@ export type Operation =
 export type OperationName = Operation["op"];
 
 // ---------------------------------------------------------------------------------------------
-// Constants and pure functions (no DOM).
+// Constants and pure functions: a board in, a board out. No DOM; they run in Node too.
 
 /** The board format this version reads and writes. */
 export declare const FORMAT: "atlas/1";
@@ -239,185 +214,71 @@ export declare const LIMITS: Readonly<{
   groupDepth: number;
 }>;
 
-/** The package version, such as `"0.3.0"`. */
+/** The package version, such as `"0.5.0"`. */
 export declare const VERSION: string;
 
-/** Thrown when a board cannot be used; `errors` lists every problem found. */
+/** Thrown when a board or an edit cannot be used; `errors` lists every problem found. */
 export declare class AtlasError extends Error {
   constructor(errors: Finding[]);
   name: "AtlasError";
   errors: Finding[];
 }
 
-/** Parses JSON text without letting keys like `__proto__` reach a prototype. Throws AtlasError. */
-export declare function parse(text: string): unknown;
-
-/** The canonical model of a board (object or JSON text). Fills defaults; does not validate. */
-export declare function normalize(input: Board | string): Model;
-
-/** Checks a canonical model; never throws. */
+/**
+ * Checks a board (object or JSON text) and never throws: the findings Atlas would report, also for
+ * text that is not JSON or a board of the wrong shape. Warnings include the placement ones
+ * (`group-split`), as `map.warnings` does.
+ */
+export declare function validate(board: Board | string): ValidationResult;
+/** @deprecated since 0.5.0: models leave the package with `normalize()` and `load()`; pass the board. */
 export declare function validate(model: Model): ValidationResult;
 
-/** `normalize()` then `validate()`. Throws AtlasError with every error if the board is unusable. */
-export declare function load(input: Board | string): LoadResult;
-
 /**
- * Applies operations atomically to a copy of `model`: all succeed and the result validates, or
- * AtlasError is thrown and `model` is untouched.
+ * Applies operations to a board as one step and returns the edited board, canonical, with the
+ * columns of a board without flow lanes saved in `layer` as Atlas saves them. It does not reorder
+ * (Atlas tidies a board without `meta.ordered` when it loads it). The input is not changed. Throws
+ * AtlasError, with every problem, when the board or an operation is invalid.
  */
-export declare function apply(model: Model, ops: Operation | readonly Operation[]): LoadResult;
+export declare function apply(board: Board | string, ops: Operation | readonly Operation[]): SavedBoard;
 
-/** The board as it should be saved: canonical order, unknown fields restored. */
-export declare function serialize(model: Model): SavedBoard;
-
-/** What changed between two models, by id. */
-export declare function diff(before: Model, after: Model): Diff;
+/** What changed from board `before` to board `after`, by id (the `diff` of `change` events). */
+export declare function diff(before: Board | string, after: Board | string): Diff;
 
 // ---------------------------------------------------------------------------------------------
-// The engine's internals, exported for tools and audits. All @experimental.
+// Deprecated since 0.5.0, removed in 0.6.0: the canonical model is no longer part of the package.
 
-/** @experimental A lane as placed by `layout()`; synthetic lanes are "Unassigned" and automatic ones. */
-export interface LayoutLane {
-  id: string;
-  title: string;
-  kind: LaneKind;
-  synthetic?: boolean;
+/** @deprecated since 0.5.0: `validate()` and `apply()` take boards; a model is internal. */
+export interface Model {
+  format: string;
+  meta: Meta & { direction: Direction };
+  lanes: SavedLane[];
+  groups: Group[];
+  nodes: Node[];
+  edges: SavedEdge[];
+  constraints: Constraint[];
+  edgeTypes: Record<string, unknown>;
+  nodeTypes: Record<string, unknown>;
+  extra: Record<string, unknown>;
 }
-
-/** @experimental Where a group's members sit in one lane (row slots `from`..`to`). */
-export interface GroupSpan {
-  group: string;
-  title: string;
-  lane: string;
-  from: number;
-  to: number;
-  depth: number;
-}
-
-/** @experimental The placement of a model: lanes, order inside each lane and row slots. */
-export interface Layout {
-  direction: Direction;
-  /** `auto` when no flow lane is declared and lanes come from the relations. */
-  mode: "lanes" | "auto";
-  flow: LayoutLane[];
-  before: LayoutLane | null;
-  after: LayoutLane | null;
-  /** Node id → lane id. */
-  laneOf: Map<string, string>;
-  /** Lane id → rank along the flow (-1 for the `before` band). */
-  rank: Map<string, number>;
-  /** Without flow lanes: node id → its computed layer (column), for nodes outside the bands. Empty otherwise. */
-  layers: Map<string, number>;
-  /** Lane id → node ids in drawing order. */
-  order: Map<string, string[]>;
-  /** Node id → row slot. */
-  slots: Map<string, number>;
-  rows: number;
-  /** Edge id → its class. */
-  edgeClass: Map<string, "forward" | "same" | "backward" | "self">;
-  groups: GroupSpan[];
-  /** Placement warnings, such as `group-split` (constraints put other nodes inside a group). */
+/** @deprecated since 0.5.0: `SavedLane`. */
+export type ModelLane = SavedLane;
+/** @deprecated since 0.5.0: `SavedEdge`. */
+export type ModelEdge = SavedEdge;
+/** @deprecated since 0.5.0: `Meta`. */
+export type ModelMeta = Meta & { direction: Direction };
+/** @deprecated since 0.5.0, with `load()`. */
+export interface LoadResult {
+  model: Model;
   warnings: Finding[];
 }
-
-/** @experimental Places a canonical model. `optimize` reorders every lane for fewest crossings. */
-export declare function layout(model: Model, options?: { optimize?: boolean }): Layout;
-
-/**
- * @experimental Where a node already in `model` should go: its index among the other nodes of
- * its lane (in drawing order), at the gap with the fewest crossings, or with `near` the allowed gap
- * nearest that index. Gaps that would move a group block, and existing nodes with it, are skipped.
- */
-export declare function bestInsertion(model: Model, nodeId: string, near?: number): number;
-
-/** @experimental How many pairs of nodes swap places between two layouts. */
-export declare function inversions(before: Pick<Layout, "order">, after: Pick<Layout, "order">): number;
-/**
- * @experimental The model with each node's computed layer saved in `layer` (boards without flow
- * lanes; removed elsewhere), as Atlas saves it after every edit. For code that edits with `apply()`
- * without an `Atlas`.
- */
-export declare function withLayers(model: Model, layout: Layout): Model;
-
-/** @experimental A point in flow coordinates: `u` along the flow, `v` across it. */
-export interface FlowPoint {
-  u: number;
-  v: number;
-}
-
-/** @experimental Where a node sits: in the `before` band (`top`), a flow lane (`col`) or the `after` band (`bot`). */
-export interface Place {
-  kind: "top" | "col" | "bot";
-  col?: number;
-}
-
-/** @experimental An edge as the router reads it; `ids` lists the edges merged into one wire. */
-export interface RouteEdge {
-  id: string;
-  from: string;
-  to: string;
-  ids?: string[];
-}
-
-/** @experimental Measured geometry for `route()`, in flow coordinates. */
-export interface RouteGeometry {
-  /** Node id → box (`l`/`r` along u, `t`/`b` along v). */
-  boxes: Map<string, { l: number; r: number; t: number; b: number }>;
-  /** Corridor (`g0`..`gN`, `ct`, `cb`, `ca`, `cz`) → extent. */
-  corridors: Record<string, { a: number; b: number }>;
-  place: (id: string) => Place;
-  debug?: boolean;
-}
-
-/** @experimental One routed wire. `k` tells whether it leaves (`out`) or reaches (`in`) the selected node. */
-export interface Wire {
-  id: string;
-  ids: string[];
-  from: string;
-  to: string;
-  k: "in" | "out";
-  /** Bundle index. */
-  h: number;
-  points: FlowPoint[];
-}
-
-/** @experimental The result of `route()`. */
-export interface RouteResult {
-  wires: Wire[];
-  crossings: number;
-  /** Only with `debug`. */
-  lists?: string[];
-}
-
-/** @experimental Routes the wires of the selected node through free corridors. */
-export declare function route(selected: string, edges: readonly RouteEdge[], geometry: RouteGeometry): RouteResult;
-
-/**
- * @experimental Tracks per corridor and ports per node side needed over every possible
- * selection (`channels` are the abstract positions of `ct` and `cb` along v).
- */
-export declare function demand(
-  nodeIds: readonly string[],
-  edges: readonly RouteEdge[],
-  place: (id: string) => Place,
-  pos: (id: string) => FlowPoint,
-  channels: { ct: number; cb: number },
-): { tracks: Map<string, number>; ports: Map<string, number> };
-
-/** @experimental Routing constants, in CSS pixels. */
-export declare const ROUTE: Readonly<{
-  gutterPad: number;
-  channelPad: number;
-  trackStep: number;
-  channelStep: number;
-  portPad: number;
-  portStep: number;
-  minSeparation: number;
-  arrow: number;
-  radius: number;
-  /** Most search work one `route()` may spend (pairs of segments compared); past it, the best order found is kept. */
-  budget: number;
-}>;
+/** @deprecated since 0.5.0: `validate()`, or `JSON.parse`. */
+export declare function parse(text: string): unknown;
+/** @deprecated since 0.5.0: `validate()` and `apply()` take boards. */
+export declare function normalize(input: Board | string): Model;
+/** @deprecated since 0.5.0: `validate()`. */
+export declare function load(input: Board | string): LoadResult;
+/** @deprecated since 0.5.0: `apply()` returns the board to save. */
+export declare function serialize(model: Model): SavedBoard;
 
 // ---------------------------------------------------------------------------------------------
 // The live map.
@@ -464,13 +325,12 @@ export interface LiveState {
   status?: string;
 }
 
+/** Where the detail goes: by the room (`auto`), or always `side`, `below`, as a `sheet`, or `none`. */
+export type PanelPlace = "auto" | "side" | "below" | "sheet" | "none";
+
 export interface AtlasOptions {
-  /** Board to load at once (object or JSON text). */
-  document?: Board | string;
-  /** Node selected at start (default: `meta.selected`). */
-  selected?: string;
-  /** Where the detail goes: `"auto"` (by the room), forced to `"side"`, `"below"` or `"sheet"`, or `false` (none). Default `"auto"`. */
-  panel?: "auto" | "side" | "below" | "sheet" | false;
+  /** Default `"auto"`. (`false` is the old spelling of `"none"`, deprecated since 0.5.0.) */
+  panel?: PanelPlace | false;
   labels?: Partial<Labels>;
   /** Custom node content: fill `button` (it receives a copy of the node and its live state). */
   renderNode?: (node: Node, button: HTMLButtonElement, live: LiveState) => void;
@@ -482,12 +342,11 @@ export interface AtlasOptions {
   historyLimit?: number;
   /** Level of the lane titles and the detail's title (`h2` by default); the detail's relations are one below. */
   headingLevel?: 1 | 2 | 3 | 4 | 5 | 6;
+  /** @deprecated since 0.5.0: `new Atlas(host).load(board)`. */
+  document?: Board | string;
+  /** @deprecated since 0.5.0: `load(board, { selected })`. */
+  selected?: string;
 }
-
-/** A node whose edges mostly run against its lane, or a board with unassigned nodes. Advice only. */
-export type Suggestion =
-  | { node: string; code: "lane"; message: string }
-  | { code: "unassigned"; message: string };
 
 export interface ChangeDetail {
   /** The revision after the change. */
@@ -501,10 +360,6 @@ export interface SelectDetail {
   id: string | null;
 }
 
-export interface ErrorDetail {
-  errors: Finding[];
-}
-
 export interface MarkDetail {
   /** The marked nodes, in reading order. */
   ids: string[];
@@ -512,47 +367,31 @@ export interface MarkDetail {
   current: string | null;
 }
 
-/** @experimental How the map is laid out now. */
-export interface Arrangement {
-  /** Lanes side by side (`flow`), side by side but scrolling sideways (`scroll`), or one after another (`stack`). */
-  board: "flow" | "scroll" | "stack";
-  /** Where the detail is. */
-  panel: "side" | "below" | "sheet" | "inline" | "none";
-  /** The sheet's state, or null when the detail is not a sheet. */
-  sheet: "peek" | "open" | null;
+export interface ErrorDetail {
+  errors: Finding[];
 }
 
-/** Events of an Atlas instance. The host element receives them too, as `atlas-<name>`. */
+/** Events of an Atlas instance. `<atlas-map>` sends them on as `atlas-<name>`. */
 export interface AtlasEventMap {
   change: CustomEvent<ChangeDetail>;
   select: CustomEvent<SelectDetail>;
   mark: CustomEvent<MarkDetail>;
-  /** @experimental */
-  arrange: CustomEvent<Arrangement>;
 }
 
-/** The working copy inside `batch()`: each call applies at once, and the batch commits as one step. */
-export interface Batch {
-  apply(ops: Operation | readonly Operation[]): Batch;
-  addNode(node: Node, options?: { index?: number; edges?: readonly Edge[] }): Batch;
-  connect(from: string, to: string, options?: { id?: string; label?: string; details?: string; type?: string; [key: string]: unknown }): Batch;
-  removeNode(id: string): Batch;
-  updateNode(id: string, changes: Changes<Node>): Batch;
-  moveNode(id: string, options?: { lane?: string | null; index?: number; before?: string; after?: string }): Batch;
-  disconnect(id: string): Batch;
-  updateEdge(id: string, changes: Changes<Edge>): Batch;
-  addLane(lane: Lane, options?: { index?: number }): Batch;
-  updateLane(id: string, changes: Changes<Lane>): Batch;
-  addGroup(group: Group): Batch;
-  updateGroup(id: string, changes: Changes<Group>): Batch;
-  addConstraint(constraint: Constraint): Batch;
-  setMeta(changes: Changes<Meta>): Batch;
-}
+/** @deprecated since 0.5.0, with `suggestions()`. */
+export type Suggestion =
+  | { node: string; code: "lane"; message: string }
+  | { code: "unassigned"; message: string };
+
+/** @deprecated since 0.5.0: `batch()` hands over the map itself. */
+export type Batch = Atlas;
 
 /**
- * A board rendered as a live map, edited through methods. Every edit is one undoable step, fires
- * `change` and returns the new revision; an edit that would make the board invalid throws
- * AtlasError and changes nothing.
+ * A board rendered as a live map. `new Atlas(host, options).load(board)`.
+ *
+ * Every edit is one undoable step, fires `change` and returns the map, so edits chain; an edit that
+ * would make the board invalid throws AtlasError and changes nothing. Reading methods return
+ * copies. A destroyed map ignores every call.
  */
 export declare class Atlas extends EventTarget {
   constructor(host: HTMLElement, options?: AtlasOptions);
@@ -560,15 +399,14 @@ export declare class Atlas extends EventTarget {
   readonly host: HTMLElement;
   /** Where the map is rendered: a shadow root of `host`, or `host` itself with `shadow: false`. */
   readonly root: ShadowRoot | HTMLElement;
-  labels: Labels;
-  options: AtlasOptions & { panel: "auto" | false; animate: boolean; shadow: boolean };
+  /** The texts in use: the defaults with `options.labels` over them. */
+  readonly labels: Readonly<Labels>;
 
-  // Reading
+  // Reading. Inside `batch()`, `toJSON()`, `node()`, `edges()` and `find()` read the batch's working
+  // copy; the rest describe the map as drawn.
 
-  /** The board as it should be saved; it reloads exactly as it is. */
+  /** The board as it should be saved; it loads again exactly as it is. */
   toJSON(): SavedBoard;
-  /** Same as `toJSON()`. */
-  export(): SavedBoard;
   /** Increases on every load, edit, undo and redo. */
   get rev(): number;
   get selected(): string | null;
@@ -576,59 +414,71 @@ export declare class Atlas extends EventTarget {
   get marked(): string[];
   /** The current mark (see `nextMark()`), or null. */
   get currentMark(): string | null;
-  /** @experimental How the map is laid out now. */
-  get arrangement(): Arrangement;
-  /** Warnings of the current board. */
+  /** Warnings of the current board, its placement's included. */
   get warnings(): Finding[];
   /** A copy of the node, or `null`. */
   node(id: string): Node | null;
   /** Copies of the edges that start or end at the node. */
-  edges(id: string): ModelEdge[];
+  edges(id: string): SavedEdge[];
   /** Ids of the nodes whose title, subtitle (the live one too) or details contain `text`, ignoring case and accents, in reading order. Blank text finds nothing. */
   find(text: string): string[];
-  suggestions(): Suggestion[];
 
   // Loading and editing
 
-  /** Replaces the board and clears the history. A board without `meta.ordered` is tidied once. */
-  load(input: Board | string, options?: { optimize?: boolean; selected?: string | null }): this;
-  apply(ops: Operation | readonly Operation[]): number;
-  /** Several edits as one undoable step. */
-  batch(fn: (batch: Batch) => void): number;
-  /** Goes to the gap with the fewest crossings unless `index` (among the nodes of its lane) is given. */
-  addNode(node: Node, options?: { index?: number; edges?: readonly Edge[] }): number;
-  updateNode(id: string, changes: Changes<Node>): number;
-  /** `lane: null` removes the node's lane. */
-  moveNode(id: string, options?: { lane?: string | null; index?: number }): number;
+  /**
+   * Replaces the board and clears the history. A board not yet tidied by Atlas (without
+   * `meta.ordered`) is reordered once for the fewest crossings; `reorder` forces or prevents that.
+   * `selected` (default: `meta.selected`) is selected without scrolling or focus.
+   */
+  load(input: Board | string, options?: { reorder?: boolean; selected?: string | null; /** @deprecated since 0.5.0: `reorder`. */ optimize?: boolean }): this;
+  /** Applies operations as one step. */
+  apply(ops: Operation | readonly Operation[]): this;
+  /**
+   * The edits made in `fn` are one undoable step and one redraw:
+   * `map.batch(m => m.addNode(a).addEdge(e).select(a.id))`. `select()`, `mark()` and `setState()`
+   * run when the batch ends. An error inside leaves the board as it was (a batch inside a batch, its
+   * own part); `load()`, `undo()`, `redo()` and `reorder()` throw inside.
+   */
+  batch(fn: (map: this) => void): this;
+  /**
+   * Goes next to the node named by `before` or `after`, or else to the gap of its lane with the
+   * fewest crossings (the allowed gap nearest `index`, among the nodes of its lane); existing nodes
+   * never change places. `edges` are added with it and count in the choice of the gap.
+   */
+  addNode(node: Node, options?: { index?: number; before?: string; after?: string; edges?: readonly Edge[] }): this;
+  updateNode(id: string, changes: Changes<Node>): this;
+  /** `lane: null` removes the node's lane; `before` / `after` name a node to stand next to, and win over `index`. */
+  moveNode(id: string, options?: { lane?: string | null; index?: number; before?: string; after?: string }): this;
   /** Also removes its edges and constraints. */
-  removeNode(id: string): number;
+  removeNode(id: string): this;
   /** Rewrites every reference (edges, derived edge ids, constraints, `meta.selected`); nothing moves. */
-  renameNode(from: string, to: string): number;
-  connect(from: string, to: string, options?: { id?: string; label?: string; details?: string; type?: string }): number;
-  updateEdge(id: string, changes: Changes<Edge>): number;
-  /** By edge id, or the first edge from `from` to `to`; throws an `AtlasError` if there is none. */
-  disconnect(idOrPair: string | { from: string; to: string }): number;
-  addLane(lane: Lane, options?: { index?: number }): number;
-  updateLane(id: string, changes: Changes<Lane>): number;
+  renameNode(from: string, to: string): this;
+  /** Without an `id`, the edge gets `from->to` (and `#2`, `#3` for repeats). */
+  addEdge(edge: Edge): this;
+  updateEdge(id: string, changes: Changes<Edge>): this;
+  removeEdge(id: string): this;
+  addLane(lane: Lane, options?: { index?: number }): this;
+  updateLane(id: string, changes: Changes<Lane>): this;
   /** Default index: last. */
-  moveLane(id: string, index?: number): number;
+  moveLane(id: string, options?: { index?: number }): this;
+  /** @deprecated since 0.5.0: `moveLane(id, { index })`. */
+  moveLane(id: string, index: number): this;
   /** Its nodes move to `moveTo`, or lose their lane. */
-  removeLane(id: string, options?: { moveTo?: string | null }): number;
-  addGroup(group: Group): number;
-  updateGroup(id: string, changes: Changes<Group>): number;
+  removeLane(id: string, options?: { moveTo?: string | null }): this;
+  addGroup(group: Group): this;
+  updateGroup(id: string, changes: Changes<Group>): this;
   /** Its members and subgroups move to its parent. */
-  removeGroup(id: string): number;
-  addConstraint(constraint: Constraint): number;
+  removeGroup(id: string): this;
+  addConstraint(constraint: Constraint): this;
   /** By position in the `constraints` list. */
-  removeConstraint(index: number): number;
-  /** Moves the node (when `lane` or `index` is given) and sets `pinned: true`. */
-  pin(id: string, options?: { lane?: string | null; index?: number }): number;
-  /** Removes the `pinned` field. */
-  unpin(id: string): number;
-  setMeta(changes: Changes<Meta>): number;
-  /** Reorders every lane for the fewest crossings; pinned nodes keep their place. */
-  /** `swaps`: pairs of nodes that change places in a lane; `layers`: nodes that change layer (boards without flow lanes). */
-  reorderAll(options?: { dryRun?: boolean }): { swaps: number; layers: number };
+  removeConstraint(index: number): this;
+  setMeta(changes: Changes<Meta>): this;
+  /**
+   * Reorders every lane (and, without flow lanes, the columns) for the fewest crossings as one
+   * step; pinned nodes keep their place. Returns how many pairs of nodes change order; `dryRun`
+   * only counts them.
+   */
+  reorder(options?: { dryRun?: boolean }): number;
   /** `false` when there is nothing to undo. */
   undo(): boolean;
   /** `false` when there is nothing to redo. */
@@ -636,34 +486,54 @@ export declare class Atlas extends EventTarget {
   get canUndo(): boolean;
   get canRedo(): boolean;
   /** Forgets every undo and redo step (for example once the board is saved). */
-  clearHistory(): void;
+  clearHistory(): this;
 
-  // Live content and viewing
+  // Live content and viewing (never undoable, never saved)
 
   /**
-   * Changes what a node shows without moving anything; `null` clears a field. `status` must match
-   * `^[a-z0-9_-]{1,32}$` and becomes the CSS part `status-<value>`. Ignored for unknown nodes.
+   * Changes what a node shows without moving anything; `null` clears a field. `status` becomes the
+   * CSS part `status-<value>` and must match `^[a-z0-9_-]{1,32}$` (AtlasError otherwise). Unknown
+   * nodes are ignored.
    */
-  setState(id: string, state?: { subtitle?: string | number | null; status?: string | null }): void;
-  /** Selects a node (or none), shows its wires and its detail. */
+  setState(id: string, state?: { subtitle?: string | number | null; status?: string | null }): this;
   /**
-   * Selects a node (null clears). `focus` (default true) moves keyboard focus to it; `reveal`
-   * (default: as `focus`) scrolls it into view; `announce` (default false) makes screen readers say
-   * its summary, as a person's selection does.
+   * Selects a node (`null` clears) and shows its wires and its detail. `reveal` (default true)
+   * scrolls it into view; `focus` (default false) moves keyboard focus to it; `announce` (default
+   * false) makes screen readers say its summary, as a person's selection does. An unknown id
+   * changes nothing.
    */
-  select(id: string | null, options?: { focus?: boolean; animate?: boolean; reveal?: boolean; announce?: boolean }): void;
-  /** Marks nodes (search results, filters); unknown ids are ignored, null or [] clears. Never selects. */
-  mark(ids: Iterable<string> | null): void;
+  select(id: string | null, options?: { focus?: boolean; animate?: boolean; reveal?: boolean; announce?: boolean }): this;
+  /** Marks nodes (search results, filters); unknown ids are ignored, `null` or `[]` clears. Never selects. */
+  mark(ids: Iterable<string> | null): this;
   /** Makes the next (step 1) or previous (-1) mark current, scrolls it into view and gives it the tab stop; `focus` also focuses it. Returns its id, or null without marks. */
   nextMark(step?: number, options?: { focus?: boolean }): string | null;
-  /** Opens (or folds, with false) the detail when it is a sheet. Returns its state. */
-  openDetail(open?: boolean): "open" | "peek";
+  /** Opens (`true`), folds (`false`) or toggles the detail when it is a sheet. Returns whether it is open. */
+  toggleDetail(force?: boolean): boolean;
   /** Finishes any running transition at once and redraws the wires. */
-  settle(): void;
-  /** Stops observing and empties `root`. Final: a destroyed instance draws nothing more. */
+  settle(): this;
+  /** Stops observing and empties `root`. Final: a destroyed map ignores every later call. */
   destroy(): void;
   /** Whether `destroy()` ran. */
   readonly destroyed: boolean;
+
+  // Deprecated since 0.5.0, removed in 0.6.0.
+
+  /** @deprecated since 0.5.0: `toJSON()`. */
+  export(): SavedBoard;
+  /** @deprecated since 0.5.0: `validate()` and `map.warnings`. */
+  suggestions(): Suggestion[];
+  /** @deprecated since 0.5.0: `addEdge({ from, to, ...options })`. */
+  connect(from: string, to: string, options?: { id?: string; label?: string; details?: string; type?: string }): this;
+  /** @deprecated since 0.5.0: `removeEdge(id)`. */
+  disconnect(idOrPair: string | { from: string; to: string }): this;
+  /** @deprecated since 0.5.0: `updateNode(id, { pinned: true })`, with `moveNode()` in the same batch. */
+  pin(id: string, options?: { lane?: string | null; index?: number }): this;
+  /** @deprecated since 0.5.0: `updateNode(id, { pinned: null })`. */
+  unpin(id: string): this;
+  /** @deprecated since 0.5.0: `reorder()`, which returns one count. */
+  reorderAll(options?: { dryRun?: boolean }): { swaps: number; layers: number };
+  /** @deprecated since 0.5.0: `toggleDetail(force)`, which returns whether it is open. */
+  openDetail(open?: boolean): "open" | "peek";
 
   addEventListener<K extends keyof AtlasEventMap>(type: K, listener: (this: Atlas, event: AtlasEventMap[K]) => void, options?: boolean | AddEventListenerOptions): void;
   addEventListener(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions): void;
@@ -676,22 +546,21 @@ export declare class Atlas extends EventTarget {
 
 /**
  * `<atlas-map>`. Attributes: `src` (board URL, same origin unless `cross-origin` is present),
- * `selected`, `panel="false"`, `cross-origin`, `theme="dark" | "light"`. A board can also go
- * inline in a `<script type="application/json">` child. Events: `atlas-change`, `atlas-select`,
- * `atlas-error`, all bubbling and composed.
+ * `selected`, `panel` (as the option: `auto`, `side`, `below`, `sheet` or `none`), `cross-origin`,
+ * `theme="dark" | "light"`. A board can also go inline in a `<script type="application/json">`
+ * child. Events, bubbling and composed: `atlas-change`, `atlas-select`, `atlas-mark` (the map's
+ * events) and `atlas-error` (a board that did not load).
  */
 export declare class AtlasMap extends HTMLElement {
-  /** The instance, created when the element is first connected (again after `atlas.destroy()`). */
+  /** The map, created when the element is first connected (again after `atlas.destroy()`). Removing the element keeps it. */
   atlas?: Atlas;
-  /** Settles with the instance once the current board is on screen; rejects with `{ errors }`. */
+  /** Settles with the map once the current board is on screen; rejects with `{ errors }`. */
   readonly ready: Promise<Atlas>;
-  /** The last failure to load, or null once a board is on screen. */
-  error: ErrorDetail | null;
+  /** @deprecated since 0.5.0: `ready` rejects with the same `{ errors }`. */
+  readonly error: ErrorDetail | null;
   static readonly observedAttributes: string[];
   connectedCallback(): void;
   attributeChangedCallback(name: string, old: string | null, value: string | null): void;
-  /** Keeps the instance alive while the element moves; call `atlas.destroy()` to free it. */
-  disconnectedCallback(): void;
 }
 
 /**
@@ -704,11 +573,11 @@ declare global {
   interface HTMLElementTagNameMap {
     "atlas-map": AtlasMap;
   }
+  // Sent by <atlas-map>; they bubble, so any element around one hears them.
   interface HTMLElementEventMap {
     "atlas-change": CustomEvent<ChangeDetail>;
     "atlas-select": CustomEvent<SelectDetail>;
     "atlas-mark": CustomEvent<MarkDetail>;
-    "atlas-arrange": CustomEvent<Arrangement>;
     "atlas-error": CustomEvent<ErrorDetail>;
   }
 }

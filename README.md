@@ -32,8 +32,8 @@ Atlas is two single files with everything inside, styles included. Pick one way:
 | How | What to use |
 |---|---|
 | Download | `atlas.js` (ES module) or `atlas.global.js` (classic script) from the [latest release](https://github.com/rpairo/atlas/releases/latest) |
-| CDN | `https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.4.0/dist/atlas.js` (always with an exact version) |
-| npm, from GitHub | `npm install github:rpairo/atlas#v0.4.0`, then `import { Atlas } from "@rpairo/atlas"` |
+| CDN | `https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.5.0/dist/atlas.js` (always with an exact version) |
+| npm, from GitHub | `npm install github:rpairo/atlas#v0.5.0`, then `import { Atlas } from "@rpairo/atlas"` |
 | Copy | `dist/atlas.js` or `dist/atlas.global.js` from this repository |
 
 Atlas is not published to the npm registry. Every release lists the
@@ -43,7 +43,7 @@ hashes of its files; [Getting started](docs/getting-started.md#pin-a-version) sh
 ## Quick start
 
 ```html
-<script type="module" src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.4.0/dist/atlas.js"></script>
+<script type="module" src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.5.0/dist/atlas.js"></script>
 
 <atlas-map>
   <script type="application/json">
@@ -68,19 +68,19 @@ Click a node to see its wires and its detail. From JavaScript:
 ```js
 import { Atlas } from "./atlas.js";
 
-const map = new Atlas(document.querySelector("#map"), { document: board });
-map.addNode({ id: "sms", title: "Welcome SMS", lane: "out" });   // goes to the best gap
-map.connect("form", "sms", { label: "sends" });
-map.undo();
+const map = new Atlas(document.querySelector("#map")).load(board);
 map.addEventListener("change", () => save(map.toJSON()));       // reloads exactly as it is
+map.addNode({ id: "sms", title: "Welcome SMS", lane: "out" })    // goes to the best gap
+  .addEdge({ from: "form", to: "sms", label: "sends" });
+map.undo();
 ```
 
-Placement, routing and validation are pure functions and also run in Node:
+Checking and editing boards needs no browser; these run in Node too:
 
 ```js
-import { load, layout } from "@rpairo/atlas";
-const { model, warnings } = load(board);   // throws AtlasError listing every problem
-const placement = layout(model);
+import { validate, apply } from "@rpairo/atlas";
+const { ok, errors, warnings } = validate(text);                 // never throws
+const saved = apply(text, [{ op: "removeNode", id: "crm" }]);    // the board to save
 ```
 
 ## Documentation

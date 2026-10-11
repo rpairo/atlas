@@ -1,27 +1,25 @@
 // Atlas: renders a board document as a live map and edits it through a small API.
 //
-//   const map = new Atlas(element, { document, selected: "a" });
-//   map.addNode({ id: "b", title: "B", lane: "in" });     // placed in the best gap, animated
-//   map.connect("a", "b", { label: "feeds" });
-//   map.undo();
+//   const map = new Atlas(element);
 //   map.addEventListener("select", e => console.log(e.detail.id));
+//   map.load(board, { selected: "a" });
+//   map.addNode({ id: "b", title: "B", lane: "in" });     // placed in the best gap, animated
+//   map.addEdge({ from: "a", to: "b", label: "feeds" });
+//   map.undo();
 //
 // Pipeline on every change: model → layout (pure) → corridor demand (pure) → DOM → measure →
 // route the selected node's wires (pure) → paint. Text always goes in with textContent, never as
 // HTML, and no CSS value comes from the data.
 
 import * as M from "./model.js";
-import { layout as computeLayout, bestInsertion, inversions, withLayers } from "./layout.js";
-import { route, demand, corridorSize, sideSize, ROUTE } from "./route.js";
+import { layout as computeLayout, bestInsertion, inversions, withLayers, withOrder } from "./layout.js";
+import { route, demand, corridorWidths, placeOf, sideSize, mergeParallel, ROUTE } from "./route.js";
 import { STYLES } from "./styles.js";
-import { MOTION, planMove, sameShape } from "./motion.js";
+import { MOTION, moveMs, sameShape } from "./motion.js";
 
 const NS = "http://www.w3.org/2000/svg";
 const SPEED = 1150;          // px per second: every wire traces at the same speed
 const BUNDLE_STAGGER = 0.09; // seconds between bundles
-const MIN_GUTTER = 56;
-const MIN_CHANNEL = 30;
-const MIN_OUTER = 26;
 const STACK_BELOW = 720;   // px of container under which lanes stack
 const BAND_NODE_MIN = 96;  // px: narrowest a node of a band gets
 const PANEL_GAP = 20;      // px between the board and a side panel (.atlas gap)
@@ -29,6 +27,7 @@ const PANEL_GAP = 20;      // px between the board and a side panel (.atlas gap)
 // elsewhere they fade out and trace again once the nodes are in place.
 const MORPH = typeof CSS !== "undefined" && CSS.supports?.("d", 'path("M0 0")') === true;
 const STATUS = /^[a-z0-9_-]{1,32}$/;
+const CUE = "atlas-cue";     // the id of the reduced-motion cues, which settle() also finishes
 const ARROWS = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] };
 
 const DEFAULT_LABELS = {
@@ -55,21 +54,22 @@ let UID = 0;   // a prefix per map for the ids of its descriptions (unique in th
 export class Atlas extends EventTarget {
   /**
    * @param host element to render into (a shadow root is attached unless `options.shadow` is false)
-   * @param options.document board (object or JSON text)
-   * @param options.selected id of the node selected at start (default: meta.selected)
-   * @param options.panel "auto" | "side" | "below" | "sheet" | false — where the detail goes (auto: by the room)
-   * @param options.labels texts of the interface (incoming, outgoing, unassigned, selfLoop)
-   * @param options.renderNode (node, button, live) => void — custom node content
-   * @param options.animate trace wires when selecting (default true)
+   * @param options.panel "auto" | "side" | "below" | "sheet" | "none": where the detail goes (auto: by the room)
+   * @param options.labels texts of the interface (see docs/api.md)
+   * @param options.renderNode (node, button, live) => void: custom node content
+   * @param options.animate motion: edits move nodes into place, wires trace (default true)
+   * @param options.historyLimit undo steps kept (default 200)
+   * @param options.headingLevel level of lane titles and the detail's title (default 2)
    * @param options.shadow render into a shadow root (default true)
-   * Options and labels set to undefined keep their defaults.
+   * Options and labels set to undefined keep their defaults. The board comes with load().
    */
   constructor(host, options = {}) {
     super();
     this.host = host;
-    this.options = { panel: "auto", animate: true, shadow: true, historyLimit: 200, headingLevel: 2, ...clean(options) };
-    this.labels = { ...DEFAULT_LABELS, ...clean(options.labels ?? {}) };
-    this.root = this.options.shadow ? (host.shadowRoot ?? host.attachShadow({ mode: "open" })) : host;
+    this._options = { panel: "auto", animate: true, shadow: true, historyLimit: 200, headingLevel: 2, ...clean(options) };
+    if (this._options.panel === false) { M.deprecated('panel: false', 'panel: "none"'); this._options.panel = "none"; }
+    this._labels = Object.freeze({ ...DEFAULT_LABELS, ...clean(options.labels ?? {}) });
+    this.root = this._options.shadow ? (host.shadowRoot ?? host.attachShadow({ mode: "open" })) : host;
     this._els = new Map();        // node id → button
     this._items = new Map();      // node id → li
     this._live = new Map();       // node id → { subtitle, status }
@@ -80,8 +80,6 @@ export class Atlas extends EventTarget {
     this._selected = null;
     this._layout = null;
     this._animations = [];        // the current edit's motion (nodes, titles, boxes, wires)
-    this._ghostAnims = [];        // removed nodes fading out (survive a new edit)
-    this._cues = [];              // reduced motion: outlines and fades that mark a change
     this._wireEls = new Map();    // wire key → its drawn elements and path
     this._after = null;           // a selection made while nodes moved: paint it when they stop
     this._sheet = "peek";         // the detail as a sheet: folded to its head, or open
@@ -90,22 +88,29 @@ export class Atlas extends EventTarget {
     this._frame = 0;
     this._mount();
     this._model = M.normalize({ nodes: [] });
-    if (options.document !== undefined) this.load(options.document, { selected: options.selected });
+    if (options.document !== undefined) {
+      M.deprecated("the document option", "load(board, { selected })");
+      this.load(options.document, { selected: options.selected });
+    }
   }
 
   // -------------------------------------------------------------------------------------------
   // Reading
 
-  /** The board as it should be saved (canonical, with the current order as its sketch). */
-  toJSON() { return M.serialize(this._model); }
-  export() { return this.toJSON(); }
+  /** The board as it should be saved (canonical, with the current order as its sketch). Inside a
+   *  batch, toJSON(), node(), edges() and find() read the batch's working copy. */
+  toJSON() { return M.serialize(this._doc); }
+  export() { M.deprecated("export()", "toJSON()"); return this.toJSON(); }
+  get _doc() { return this._batch?.model ?? this._model; }
+  /** The interface texts in use (read-only: they come from the labels option). */
+  get labels() { return this._labels; }
   get rev() { return this._rev; }
   get selected() { return this._selected; }
   /** Warnings of the board (validate) and of its placement (a group split by constraints). */
   get warnings() { return [...(this._warnings ?? []), ...(this._layout?.warnings ?? [])]; }
-  node(id) { const n = this._model.nodes.find(x => x.id === id); return n ? M.clone(n) : null; }
+  node(id) { const n = this._doc.nodes.find(x => x.id === id); return n ? M.clone(n) : null; }
   edges(id) {
-    return this._model.edges.filter(e => e.from === id || e.to === id).map(e => M.clone(e));
+    return this._doc.edges.filter(e => e.from === id || e.to === id).map(e => M.clone(e));
   }
   /** Nodes whose title, subtitle (the live one too) or details contain `text`, ignoring case and
    *  accents, in reading order. Blank text finds nothing. */
@@ -113,8 +118,8 @@ export class Atlas extends EventTarget {
     const q = fold(text).trim();
     if (!q) return [];
     const hit = n => [n.title, n.subtitle, this._live.get(n.id)?.subtitle, ...(Array.isArray(n.details) ? n.details : [])].some(s => typeof s === "string" && fold(s).includes(q));
-    const rank = new Map(this._ordered().map((id, i) => [id, i]));
-    return this._model.nodes.filter(hit).map(n => n.id).sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0));
+    const rank = new Map(this._ordered().map((id, i) => [id, i]));   // nodes not drawn yet (a batch) go last
+    return this._doc.nodes.filter(hit).map(n => n.id).sort((a, b) => (rank.get(a) ?? rank.size) - (rank.get(b) ?? rank.size));
   }
   /** The marked nodes (see mark()), in reading order. */
   get marked() { return [...this._marks]; }
@@ -129,15 +134,17 @@ export class Atlas extends EventTarget {
    * marked node is described to screen readers as "Match 2 of 5"; the count is the page's to say.
    */
   mark(ids) {
-    if (this._destroyed) return;
+    if (this._destroyed) return this;
+    if (this._batch) return this._later(() => this.mark(ids));
     const want = new Set(ids == null ? [] : [...ids].filter(id => this._els.has(id)));
     const next = this._ordered().filter(id => want.has(id));
-    if (next.join("\u0000") === this._marks.join("\u0000")) return;
+    if (next.join("\u0000") === this._marks.join("\u0000")) return this;
     this._marks = next;
     this._markAt = null;
     this._highlight();
     // Not announced: the page's search box says how many it found (both would be heard).
     this._emit("mark", { ids: [...next], current: null });
+    return this;
   }
 
   /**
@@ -162,6 +169,7 @@ export class Atlas extends EventTarget {
 
   /** Nodes that contradict their lane: most of their edges run backwards. Advice, never applied. */
   suggestions() {
+    M.deprecated("suggestions()", "the warnings of validate() and map.warnings");
     const out = [];
     const L = this._layout;
     if (!L) return out;
@@ -178,11 +186,14 @@ export class Atlas extends EventTarget {
   // -------------------------------------------------------------------------------------------
   // Loading and editing. Every edit is one undoable step and fires a "change" event.
 
-  /** Replaces the board. A board not yet ordered by Atlas is tidied once (fewest crossings). */
-  load(input, { optimize, selected } = {}) {
+  /** Replaces the board. A board not yet ordered by Atlas is reordered once (fewest crossings);
+   *  `reorder: true` forces that, `false` prevents it. */
+  load(input, { reorder, optimize, selected } = {}) {
     if (this._destroyed) return this;
+    this._noBatch("load()");
+    if (optimize !== undefined) M.deprecated("load(board, { optimize })", "load(board, { reorder })");
     const { model, warnings } = M.load(input);
-    const tidy = optimize ?? model.meta.ordered !== true;
+    const tidy = reorder ?? optimize ?? model.meta.ordered !== true;
     // Without flow lanes the layers are saved with the board, the ones the order was tidied for:
     // later edits keep them wherever the edges allow.
     const L = computeLayout(model, { optimize: tidy });
@@ -194,80 +205,137 @@ export class Atlas extends EventTarget {
     this._future = [];
     this._live.clear();
     this._sheet = "peek";
+    const hadMarks = this._marks.length > 0;
     this._marks = [];
     this._markAt = null;
     this._rev++;
     this._render({ animate: false });
     const first = selected === undefined ? (m.meta.selected ?? null) : selected;
-    this.select(first && m.nodes.some(n => n.id === first) ? first : null, { focus: false, animate: this.options.animate });
+    this.select(first && m.nodes.some(n => n.id === first) ? first : null, { reveal: false });
     this._emit("change", { rev: this._rev, diff: null, warnings: this.warnings });
+    if (hadMarks) this._emit("mark", { ids: [], current: null });
     return this;
   }
 
-  /** Applies raw operations (see model.js OPS) as one step. */
+  /** Applies raw operations (see the operations in docs/api.md) as one step. Returns the map. */
   apply(ops) {
-    const before = this._model;
-    const { model, warnings } = M.apply(before, ops);
-    this._commit(before, model, warnings, renamesOf(ops));
-    return this._rev;
+    if (this._destroyed) return this;
+    const b = this._batch;
+    const { model, warnings } = M.apply(this._doc, ops);
+    if (b) Object.assign(b, { model, warnings, renames: [...b.renames, ...renamesOf(ops)] });
+    else this._commit(this._model, model, warnings, renamesOf(ops));
+    return this;
   }
 
-  /** Groups several edits into one undoable step: map.batch(m => { m.addNode(...); m.connect(...) }). */
+  /**
+   * Makes the edits of `fn(map)` one undoable step: map.batch(m => m.addNode(…).addEdge(…)). Inside,
+   * every editing method edits a working copy, which toJSON(), node(), edges() and find() read;
+   * select(), mark() and setState() wait for the end, when the map redraws once. An error inside
+   * leaves the board as it was (a batch inside a batch, its own part). load(), undo(), redo() and
+   * reorder() are refused inside.
+   */
   batch(fn) {
-    const before = this._model;
-    const proxy = new Batch(this, before);
-    fn(proxy);
-    if (proxy.model !== before) this._commit(before, proxy.model, proxy.warnings, proxy.renames);
-    return this._rev;
+    if (this._destroyed) return this;
+    const outer = this._batch;
+    const start = outer ?? { model: this._model, warnings: this._warnings, renames: [], later: [] };
+    this._batch = { ...start, later: [...start.later] };
+    let b;
+    try { fn(this); b = this._batch; } finally { this._batch = outer; }
+    if (outer) Object.assign(outer, b);
+    else {
+      if (b.model !== start.model) this._commit(start.model, b.model, b.warnings, b.renames);
+      for (const f of b.later) f();
+    }
+    return this;
   }
 
-  /** Adds a node. Without an explicit index it goes to the gap with fewest crossings. */
-  addNode(node, { index, edges = [] } = {}) {
-    return this.batch(b => b.addNode(node, { index, edges }));
+  /** Inside a batch, a call that needs the map drawn runs when the batch ends. */
+  _later(f) {
+    this._batch.later.push(f);
+    return this;
+  }
+
+  /** Adds a node with its optional edges: next to the node named by `before` or `after`, or without
+   *  them in the gap of its lane with the fewest crossings (the allowed gap nearest `index`, when
+   *  given); existing nodes never change places. */
+  addNode(node, { index, before, after, edges = [] } = {}) {
+    return this.batch(() => {
+      this.apply([{ op: "addNode", node }, ...edges.map(e => ({ op: "addEdge", edge: e }))]);
+      // The document order of every lane becomes its drawn order first (constraints and groups can
+      // draw a lane in another order than the document's): a position counted in drawn order then
+      // lands exactly there, and no existing node changes places. Without flow lanes the new node's
+      // layer is saved too, so the rest of the edit keeps it.
+      const b = this._batch, L0 = computeLayout(b.model);
+      b.model = withLayers(withOrder(b.model, L0), L0);
+      if (before != null || after != null) return this.apply({ op: "moveNode", id: node.id, before, after });
+      // Positions are relative to the node's lane, which may be automatic: anchor on a neighbour.
+      const L = computeLayout(b.model);
+      const peers = L.order.get(L.laneOf.get(node.id)).filter(id => id !== node.id);
+      // The best gap, or the allowed gap nearest the given index: never one that moves existing nodes.
+      const at = bestInsertion(b.model, node.id, index);
+      if (peers.length) this.apply(at < peers.length ? { op: "moveNode", id: node.id, before: peers[at] } : { op: "moveNode", id: node.id, after: peers.at(-1) });
+    });
   }
   updateNode(id, changes) { return this.apply({ op: "updateNode", id, changes }); }
-  moveNode(id, { lane, index } = {}) { return this.apply({ op: "moveNode", id, lane, index }); }
+  moveNode(id, { lane, index, before, after } = {}) { return this.apply({ op: "moveNode", id, lane, index, before, after }); }
   removeNode(id) { return this.apply({ op: "removeNode", id }); }
   /** Changes an id. The node keeps its element on screen (and its live state, focus and selection),
    *  also when undo or redo renames it back. */
   renameNode(from, to) { return this.apply({ op: "renameNode", from, to }); }
-  connect(from, to, { id, label, details, type } = {}) {
-    return this.apply({ op: "addEdge", edge: clean({ id, from, to, label, details, type }) });
-  }
+  addEdge(edge) { return this.apply({ op: "addEdge", edge }); }
   updateEdge(id, changes) { return this.apply({ op: "updateEdge", id, changes }); }
-  disconnect(idOrPair) {
-    const id = typeof idOrPair === "string" ? idOrPair
-      : this._model.edges.find(e => e.from === idOrPair?.from && e.to === idOrPair?.to)?.id;
-    if (id === undefined) {
-      throw new M.AtlasError([{ path: "", code: "invalid", message: `no edge from "${idOrPair?.from}" to "${idOrPair?.to}"` }]);
-    }
-    return this.apply({ op: "removeEdge", id });
-  }
+  removeEdge(id) { return this.apply({ op: "removeEdge", id }); }
   addLane(lane, { index } = {}) { return this.apply({ op: "addLane", lane, index }); }
   updateLane(id, changes) { return this.apply({ op: "updateLane", id, changes }); }
-  moveLane(id, index) { return this.apply({ op: "moveLane", id, index }); }
+  moveLane(id, where = {}) {
+    if (typeof where === "number") { M.deprecated("moveLane(id, index)", "moveLane(id, { index })"); where = { index: where }; }
+    return this.apply({ op: "moveLane", id, index: where.index });
+  }
   removeLane(id, { moveTo } = {}) { return this.apply({ op: "removeLane", id, moveTo }); }
   addGroup(group) { return this.apply({ op: "addGroup", group }); }
   updateGroup(id, changes) { return this.apply({ op: "updateGroup", id, changes }); }
   removeGroup(id) { return this.apply({ op: "removeGroup", id }); }
   addConstraint(constraint) { return this.apply({ op: "addConstraint", constraint }); }
   removeConstraint(index) { return this.apply({ op: "removeConstraint", index }); }
-  /** Optionally moves a node, then marks it pinned: reorderAll() leaves it where it is. */
-  pin(id, { lane, index } = {}) {
-    return this.batch(b => {
-      if (lane !== undefined || index !== undefined) b.apply({ op: "moveNode", id, lane, index });
-      b.apply({ op: "updateNode", id, changes: { pinned: true } });
-    });
-  }
-  unpin(id) { return this.apply({ op: "updateNode", id, changes: { pinned: null } }); }
   setMeta(changes) { return this.apply({ op: "setMeta", changes }); }
 
-  /**
-   * Reorders every lane for the fewest crossings. With { dryRun: true } it only reports how many
-   * pairs of nodes would swap. Pinned nodes keep their place.
-   */
+  // Deprecated since 0.5.0, removed in 0.6.0.
+  connect(from, to, { id, label, details, type } = {}) {
+    M.deprecated("connect(from, to, options)", "addEdge({ from, to, ...options })");
+    return this.addEdge(clean({ id, from, to, label, details, type }));
+  }
+  disconnect(idOrPair) {
+    M.deprecated("disconnect()", "removeEdge(id)");
+    const id = typeof idOrPair === "string" ? idOrPair : this._doc.edges.find(e => e.from === idOrPair?.from && e.to === idOrPair?.to)?.id;
+    if (id === undefined) throw new M.AtlasError([{ path: "", code: "invalid", message: `no edge from "${idOrPair?.from}" to "${idOrPair?.to}"` }]);
+    return this.removeEdge(id);
+  }
+  pin(id, { lane, index } = {}) {
+    M.deprecated("pin()", "updateNode(id, { pinned: true }) (and moveNode in the same batch)");
+    return this.batch(() => {
+      if (lane !== undefined || index !== undefined) this.moveNode(id, { lane, index });
+      this.updateNode(id, { pinned: true });
+    });
+  }
+  unpin(id) { M.deprecated("unpin()", "updateNode(id, { pinned: null })"); return this.updateNode(id, { pinned: null }); }
   reorderAll({ dryRun = false } = {}) {
+    M.deprecated("reorderAll()", "reorder(), which returns one count");
+    return this._reorder(dryRun);
+  }
+
+  /**
+   * Reorders every lane for the fewest crossings (without flow lanes, the columns too) as one step,
+   * pinned nodes keeping their place. Returns how many pairs of nodes change order; with
+   * { dryRun: true } it only counts them.
+   */
+  reorder({ dryRun = false } = {}) {
+    const { swaps, layers } = this._reorder(dryRun);
+    return swaps + layers;
+  }
+
+  _reorder(dryRun) {
     if (this._destroyed) return { swaps: 0, layers: 0 };
+    this._noBatch("reorder()");
     const now = this._layout ?? computeLayout(this._model);
     // Without flow lanes the layers are computed afresh too, from the edges alone (pinned nodes keep
     // theirs where the edges allow): the reset for the drift that many edits leave. Only Atlas's own
@@ -302,45 +370,62 @@ export class Atlas extends EventTarget {
   // so undo and redo rename back and forth exactly.
   undo() {
     if (this._destroyed) return false;
+    this._noBatch("undo()");
     const prev = this._history.pop();
     if (!prev) return false;
     this._future.push({ model: this._model, renames: prev.renames });
-    this._swap(prev.model, prev.renames.map(([from, to]) => [to, from]).reverse());
+    this._show(prev.model, M.validate(prev.model).warnings, prev.renames.map(([from, to]) => [to, from]).reverse());
     return true;
   }
   redo() {
     if (this._destroyed) return false;
+    this._noBatch("redo()");
     const next = this._future.pop();
     if (!next) return false;
     this._history.push({ model: this._model, renames: next.renames });
-    this._swap(next.model, next.renames);
+    this._show(next.model, M.validate(next.model).warnings, next.renames);
     return true;
   }
   /** Forgets every undo and redo step (for example once the board is saved). */
-  clearHistory() { this._history = []; this._future = []; }
+  clearHistory() { this._history = []; this._future = []; return this; }
+
+  /** The panel option changed (the panel attribute of <atlas-map>). */
+  _setPanel(panel) {
+    this._options.panel = panel;
+    this._schedule();
+  }
+
+  _noBatch(what) {
+    if (this._batch) throw new M.AtlasError([{ path: "", code: "invalid", message: `${what} cannot run inside batch()` }]);
+  }
   get canUndo() { return this._history.length > 0; }
   get canRedo() { return this._future.length > 0; }
 
   /** Live content (for example from a home automation system): never moves anything. */
-  setState(id, { subtitle, status } = {}) {
-    if (this._destroyed || !this._els.has(id)) return;
+  setState(id, state = {}) {
+    if (this._batch) return this._later(() => this.setState(id, state));
+    const { subtitle, status } = state;
+    if (this._destroyed || !this._els.has(id)) return this;
+    if (status != null && !STATUS.test(String(status))) {
+      throw new M.AtlasError([{ path: "status", code: "invalid", message: `status "${status}" is not [a-z0-9_-]{1,32}` }]);
+    }
     const s = { ...(this._live.get(id) ?? {}) };
     if (subtitle !== undefined) s.subtitle = subtitle === null ? undefined : String(subtitle);
-    if (status !== undefined) s.status = status !== null && STATUS.test(String(status)) ? String(status) : undefined;
+    if (status !== undefined) s.status = status === null ? undefined : String(status);
     this._live.set(id, s);
     this._fillNode(this._model.nodes.find(n => n.id === id), this._els.get(id));
+    return this;
   }
 
-  /** Selects a node (or null), shows its wires and its detail. */
-  select(id, { focus = true, animate = this.options.animate, reveal = focus, announce = false } = {}) {
-    this._select(id, { focus, animate, reveal }, announce);
-  }
-
-  _select(id, { focus = true, animate = this.options.animate, reveal = focus } = {}, announce = true) {
-    if (this._destroyed) return;
-    if (id !== null && !this._els.has(id)) id = null;
+  /** Selects a node (null clears), shows its wires and its detail, and scrolls it into view
+   *  (`reveal`). `focus` also moves keyboard focus to it; `announce`, for selections a person made,
+   *  makes screen readers say its summary. An unknown id changes nothing. */
+  select(id, options = {}) {
+    if (this._batch) return this._later(() => this.select(id, options));
+    const { focus = false, animate = this._options.animate, reveal = true, announce = false } = options;
+    if (this._destroyed || (id !== null && !this._els.has(id))) return this;
     const prev = this._selected;
-    if (id !== prev) this._ring = null;   // keyboard steps belong to one selection
+    if (id !== prev) this._stepping = null;   // keyboard steps belong to one selection
     this._selected = id;
     this._highlight();
     this._fillPanel();
@@ -352,22 +437,19 @@ export class Atlas extends EventTarget {
     if (id !== null) this._setTabStop(id, focus, reveal);
     if (prev !== id) this._emit("select", { id });
     if (announce) this._announce(id === null ? "" : this._summary(id));
+    return this;
   }
 
   /** Finishes any running transition at once (its end state) and redraws the wires. */
   settle() {
-    if (this._destroyed) return;
-    const running = [...this._animations, ...this._ghostAnims, ...this._cues];
-    this._animations = [];        // a transition's end callback sees it is no longer current
-    this._ghostAnims = [];
-    this._cues = [];
+    if (this._destroyed) return this;
+    this._stopMotion("finish");
     this._after = null;
-    running.forEach(a => a.finish());
-    this._ghosts.replaceChildren();
     this._paint(false);
     const late = this._revealAfter;
     this._revealAfter = null;
     if (late?.isConnected) this._reveal(late, true);   // settled now: no smooth scroll still to come
+    return this;
   }
 
   /** Frees the map: observers, frames and animations stop and the content is removed. Final: a
@@ -379,11 +461,7 @@ export class Atlas extends EventTarget {
     removeEventListener("resize", this._onResize);
     cancelAnimationFrame(this._frame);
     clearTimeout(this._saying);
-    const running = [...this._animations, ...this._ghostAnims, ...this._cues];
-    this._animations = [];          // a transition's end callback sees it is no longer current
-    this._ghostAnims = [];
-    this._cues = [];
-    running.forEach(a => a.cancel());
+    this._stopMotion("cancel");
     this.root.replaceChildren();
   }
   get destroyed() { return this._destroyed === true; }
@@ -397,28 +475,25 @@ export class Atlas extends EventTarget {
     // An edit that changes nothing (same title, empty list of operations) makes no undo step.
     if (after === before || JSON.stringify(M.serialize(after)) === JSON.stringify(M.serialize(before))) return;
     this._history.push({ model: before, renames });
-    while (this._history.length > this.options.historyLimit) this._history.shift();
+    while (this._history.length > this._options.historyLimit) this._history.shift();
     this._future = [];
-    this._model = after;
-    this._warnings = warnings ?? [];
-    this._rev++;
-    const d = M.diff(before, after);
-    const followed = this._follow(renames);
-    this._render({ animate: true, diff: d });
-    this._emit("change", { rev: this._rev, diff: d, warnings: this.warnings });
-    if (followed) this._emit("select", { id: this._selected });
+    this._show(after, warnings ?? [], renames);
   }
 
-  _swap(model, renames) {
+  /** Puts a new version of the board on screen (an edit, undo or redo) and says so. */
+  _show(model, warnings, renames) {
     const before = this._model;
+    const marks = () => [...this._marks, this._markAt].join("\u0000");
+    const marked = marks();
     this._model = model;
-    this._warnings = M.validate(model).warnings;
+    this._warnings = warnings;
     this._rev++;
     const d = M.diff(before, model);
     const followed = this._follow(renames);
     this._render({ animate: true, diff: d });
     this._emit("change", { rev: this._rev, diff: d, warnings: this.warnings });
     if (followed) this._emit("select", { id: this._selected });
+    if (marks() !== marked) this._emit("mark", { ids: [...this._marks], current: this._markAt });
   }
 
   /** A node renamed by an edit, a batch, undo or redo keeps its element on screen (with its live
@@ -442,7 +517,6 @@ export class Atlas extends EventTarget {
 
   _emit(type, detail) {
     this.dispatchEvent(new CustomEvent(type, { detail }));
-    this.host.dispatchEvent(new CustomEvent(`atlas-${type}`, { detail, bubbles: true, composed: true }));
   }
 
   // -------------------------------------------------------------------------------------------
@@ -480,7 +554,7 @@ export class Atlas extends EventTarget {
       if (e.key !== "Escape" || this._wrap.dataset.panel !== "sheet" || this._sheet !== "open") return;
       e.preventDefault();
       e.stopPropagation();   // used here: a dialog around the map stays open
-      this.openDetail(false);
+      this.toggleDetail(false);
       if (this._selected !== null) this._setTabStop(this._selected, true);
     });
     // Alt with Left or Right is Back or Forward in Chrome and Edge on Windows and Linux: inside the
@@ -514,7 +588,7 @@ export class Atlas extends EventTarget {
       this._placePanel();
       // Wires are drawn again only when the board's geometry changed, not when the page around it
       // did (the detail panel opening below it resizes the host): that would cut a wire being traced.
-      if (!this._moving() && this._geometryKey() !== this._painted) this._paint(false);
+      if (!this._moving() && this._geometryKey() !== this._paintedKey) this._paint(false);
     });
   }
 
@@ -541,7 +615,7 @@ export class Atlas extends EventTarget {
     // The selection follows the board: a node that is gone (removed, renamed by undo, another board
     // loaded) is no longer selected, and listeners hear it.
     const lost = this._selected !== null && !this._model.nodes.some(n => n.id === this._selected);
-    if (lost) { this._selected = null; this._ring = null; }
+    if (lost) { this._selected = null; this._stepping = null; }
     // Marks leave with their nodes, and keep reading order.
     const present = new Set(this._model.nodes.map(n => n.id));
     if (this._marks.some(x => !present.has(x))) this._marks = this._marks.filter(x => present.has(x));
@@ -549,18 +623,15 @@ export class Atlas extends EventTarget {
     const active = this._active();
     const hadFocus = active !== null && this._board.contains(active);
     // Motion: none with animate: false; under reduced motion only cues that do not travel.
-    const mode = !animate || !this.options.animate ? "off" : reducedMotion() ? "reduce" : "full";
+    const mode = !animate || !this._options.animate ? "off" : reducedMotion() ? "reduce" : "full";
     // Where everything is on screen, read before anything is written (and before running motion is
     // stopped: a node in flight starts its next move from where it is seen, not from where it was going).
     const first = mode === "off" ? null : this._snapshot();
-    this._stopMotion(mode === "off");
+    this._stopMotion(mode === "off" ? "cancel" : "interrupt");
 
     const L = computeLayout(this._model);
     this._layout = L;
-    const geo = this._abstractGeometry(L);
-    const need = demand(this._model.nodes.map(n => n.id), this._model.edges, geo.place, geo.pos, { ct: 0, cb: 1 });
-    this._need = need;
-    this._build(L, need);
+    this._build(L, demand(this._model, L));
     this._minWidth = this._intrinsicWidth();
     this._rowsWidth = this._board.getBoundingClientRect().width;   // the width its rows were sized at
     this._applyMode();
@@ -582,7 +653,7 @@ export class Atlas extends EventTarget {
   /** A heading tag `depth` levels below `headingLevel` (lane titles and the detail's title are at it,
    *  the detail's "Incoming" and "Outgoing" one below), so the map fits the page's outline. */
   _heading(depth) {
-    const level = Math.min(6, Math.max(1, Math.round(Number(this.options.headingLevel) || 2) + depth));
+    const level = Math.min(6, Math.max(1, Math.round(Number(this._options.headingLevel) || 2) + depth));
     return `h${level}`;
   }
 
@@ -592,43 +663,20 @@ export class Atlas extends EventTarget {
     return a ?? null;
   }
 
-  /** Abstract positions (before measuring) used to size corridors: u = lane, v = slot. */
-  _abstractGeometry(L) {
-    const col = new Map(L.flow.map((l, i) => [l.id, i]));
-    const N = L.flow.length;
-    const bandIndex = new Map();
-    for (const band of [L.before, L.after]) if (band) L.order.get(band.id).forEach((id, i, a) => bandIndex.set(id, (i + 0.5) / a.length * N));
-    const place = id => {
-      const lane = L.laneOf.get(id);
-      if (L.before && lane === L.before.id) return { kind: "top" };
-      if (L.after && lane === L.after.id) return { kind: "bot" };
-      return { kind: "col", col: col.get(lane) };
-    };
-    const pos = id => {
-      const p = place(id);
-      if (p.kind === "top") return { u: bandIndex.get(id) - 0.5, v: -0.5 };
-      if (p.kind === "bot") return { u: bandIndex.get(id) - 0.5, v: 1.5 };
-      return { u: p.col, v: (L.slots.get(id) + 0.5) / L.rows };
-    };
-    return { place, pos };
-  }
-
   _build(L, need) {
     const dir = L.direction;
     const vertical = dir === "down" || dir === "up";
     const reversed = dir === "left" || dir === "up";
     const N = L.flow.length;
     this._wrap.dataset.direction = dir;
-    if (!this.options.animate) this._wrap.dataset.motion = "off"; else delete this._wrap.dataset.motion;
+    if (!this._options.animate) this._wrap.dataset.motion = "off"; else delete this._wrap.dataset.motion;
     const board = this._board;
     const keep = new Set(this._model.nodes.map(n => n.id));
     for (const [id, li] of this._items) if (!keep.has(id)) { li.remove(); this._items.delete(id); this._els.delete(id); this._live.delete(id); }
 
-    const size = (c, min) => Math.max(min, corridorSize(need.tracks.get(c) ?? 0, c[0] === "g" ? "g" : "c"));
-    const gutters = Array.from({ length: N + 1 }, (_, k) => size("g" + k, k === 0 || k === N ? MIN_OUTER : MIN_GUTTER));
-    const ch = { ct: size("ct", MIN_CHANNEL), cb: size("cb", MIN_CHANNEL), ca: size("ca", 12), cz: size("cz", 12) };
-    for (let k = 0; k <= N; k++) board.style.setProperty(`--g${k}`, `${gutters[k]}px`);
-    for (const [k, v] of Object.entries(ch)) board.style.setProperty(`--${k}`, `${v}px`);
+    const widths = corridorWidths(need, N);
+    widths.g.forEach((w, k) => board.style.setProperty(`--g${k}`, `${w}px`));
+    for (const k of ["ct", "cb", "ca", "cz"]) board.style.setProperty(`--${k}`, `${widths[k]}px`);
 
     // Board: before band, channel, flow, channel, after band, stacked across the flow.
     const parts = [];
@@ -665,7 +713,7 @@ export class Atlas extends EventTarget {
       return sec;
     };
     if (L.before) parts.push(bandEl(L.before, "before"));
-    parts.push(cls(el("div", "channel ch-ct"), "lane-gap"));
+    parts.push(el("div", "channel ch-ct lane-gap"));
 
     const flow = el("div", "flow");
     this._flowEl = flow;
@@ -674,14 +722,14 @@ export class Atlas extends EventTarget {
       const tracks = [];
       for (let k = 0; k < N; k++) tracks.push(`var(--g${k})`, "auto");
       tracks.push(`var(--g${N})`);
-      flow.style.gridTemplateRows = (reversed ? reverseTracks(tracks) : tracks).join(" ");
+      flow.style.gridTemplateRows = (reversed ? tracks.reverse() : tracks).join(" ");
       flow.style.gridTemplateColumns = `minmax(64px, max-content) repeat(${rows}, minmax(var(--node-min-cross, 120px), 1fr))`;
       flow.style.columnGap = "10px";
     } else {
       const tracks = [];
       for (let k = 0; k < N; k++) tracks.push(`var(--g${k})`, "minmax(var(--node-min), 1fr)");
       tracks.push(`var(--g${N})`);
-      flow.style.gridTemplateColumns = (reversed ? reverseTracks(tracks) : tracks).join(" ");
+      flow.style.gridTemplateColumns = (reversed ? tracks.reverse() : tracks).join(" ");
       flow.style.rowGap = "10px";
     }
     // Group legends take grid tracks of their own, so a legend never sits on a node or a lane title.
@@ -718,7 +766,6 @@ export class Atlas extends EventTarget {
       flow.append(g);
     }
     this._gutters = gutterEls;
-    this._lanes = [];
     L.flow.forEach((lane, k) => {
       const sec = el("section", "lane");
       sec.dataset.lane = lane.id;
@@ -797,11 +844,10 @@ export class Atlas extends EventTarget {
       }
       list.prepend(...deco);
       sec.append(title, list);
-      this._lanes.push(sec);
       flow.append(sec);
     });
     parts.push(flow);
-    parts.push(cls(el("div", "channel ch-cb"), "lane-gap"));
+    parts.push(el("div", "channel ch-cb lane-gap"));
     if (L.after) parts.push(bandEl(L.after, "after"));
 
     if (vertical) {
@@ -815,11 +861,11 @@ export class Atlas extends EventTarget {
     }
     board.replaceChildren(this._svg, this._ghosts, ...parts);
 
-    // Ports need room: a node is at least as long as its busiest side requires.
+    // Ports need room: a node is at least as long as its busiest side (the ones facing the gutters,
+    // left and right in the flow: tall nodes across, wide nodes down or up) requires.
     for (const n of this._model.nodes) {
       const b = this._els.get(n.id);
-      const sides = vertical ? ["T", "B"] : ["L", "R"];
-      const len = Math.max(...sides.map(s => sideSize(need.ports.get(`${n.id}:${s}`) ?? 0)));
+      const len = Math.max(...["L", "R"].map(s => sideSize(need.ports.get(`${n.id}:${s}`) ?? 0)));
       b.style.minHeight = !vertical && len ? `${len}px` : "";
       b.style.minWidth = vertical && len ? `${len}px` : "";
       this._fillNode(n, b);
@@ -838,8 +884,8 @@ export class Atlas extends EventTarget {
       // Activating the selected node again opens the detail when it is a folded sheet.
       b.addEventListener("click", () => {
         const id = this._idOf.get(b);
-        if (id === this._selected && this._wrap.dataset.panel === "sheet" && this._sheet !== "open") this.openDetail(true);
-        else this._select(id, {}, true);   // a person selected it: screen readers hear the summary
+        if (id === this._selected && this._wrap.dataset.panel === "sheet" && this._sheet !== "open") this.toggleDetail(true);
+        else this.select(id, { focus: true, announce: true });
       });
       li.append(b);
       this._items.set(id, li);
@@ -869,7 +915,7 @@ export class Atlas extends EventTarget {
     b.setAttribute("part", this._partOf(n));
     this._stateParts(n.id, b);
     if (live.status) b.dataset.status = live.status; else delete b.dataset.status;
-    if (this.options.renderNode) { this.options.renderNode(M.clone(n), b, { ...live }); return; }
+    if (this._options.renderNode) { this._options.renderNode(M.clone(n), b, { ...live }); return; }
     const t = txt("span", "t", n.title ?? n.id);
     const sub = live.subtitle ?? n.subtitle;
     const parts = [t];
@@ -888,7 +934,7 @@ export class Atlas extends EventTarget {
     if (!this._minWidth) this._minWidth = this._intrinsicWidth();
     const vertical = L.direction === "down" || L.direction === "up";
     const lanes = vertical ? Math.max(1, L.rows) : Math.max(1, L.flow.length);
-    const needed = this._minWidth || lanes * (vertical ? 130 : 150) + (lanes + 1) * MIN_GUTTER + 40;
+    const needed = this._minWidth || lanes * (vertical ? 130 : 150) + (lanes + 1) * ROUTE.minGutter + 40;
     const side = (parseFloat(getComputedStyle(this._wrap).getPropertyValue("--atlas-panel-width")) || 300) + PANEL_GAP;
     // Wires need the lanes side by side. When they do not fit, the board scrolls sideways inside
     // its box; only a really narrow container stacks the lanes.
@@ -896,11 +942,11 @@ export class Atlas extends EventTarget {
     // swap the arrangement back and forth.
     const was = this._wrap.dataset;
     const mode = width >= Math.min(needed, STACK_BELOW) - (was.mode === "flow" ? 16 : 0) ? "flow" : "stack";
-    const asked = this.options.panel;
-    let panel = asked === false ? "none" : mode === "stack" ? "inline"
+    const asked = this._options.panel;
+    let panel = asked === "none" ? "none" : mode === "stack" ? "inline"
       : ["side", "below", "sheet"].includes(asked) ? asked
       : width >= needed + side - (was.panel === "side" ? 16 : 0) ? "side" : "below";
-    const before = `${was.mode}|${was.panel}`;
+    const before = `${was.mode}|${was.panel}`, firstTime = was.mode === undefined;
     if (this._wrap.dataset.mode !== mode) this._wrap.dataset.mode = mode;
     if (panel === "below" && asked !== "below") {
       // Under the board, in the page, when the board and the open detail fit the window together;
@@ -911,10 +957,7 @@ export class Atlas extends EventTarget {
       if (this._board.getBoundingClientRect().height + PANEL_GAP + open > vh - 24 - slack) panel = "sheet";
     }
     if (this._wrap.dataset.panel !== panel) this._wrap.dataset.panel = panel;
-    if (`${mode}|${panel}` !== before) {
-      if (before !== "undefined|undefined") this._fillPanel();   // a sheet's head is a toggle
-      this._emit("arrange", this.arrangement);
-    }
+    if (`${mode}|${panel}` !== before && !firstTime) this._fillPanel();   // a sheet's head is a toggle
   }
 
   /** WebKit (Safari) keeps the rows of a grid of subgrids at their old heights when the board gets
@@ -982,11 +1025,8 @@ export class Atlas extends EventTarget {
 
   _highlight() {
     const id = this._selected;
-    const outs = new Set(), ins = new Set();
-    if (id !== null) for (const e of this._model.edges) {
-      if (e.from === id && e.to !== id) outs.add(e.to);
-      if (e.to === id && e.from !== id) ins.add(e.from);
-    }
+    const star = id === null ? null : this._neighbours(id);
+    const ins = new Set(star?.in.map(x => x.id)), outs = new Set(star?.out.map(x => x.id));
     const marks = new Set(this._marks);
     for (const [nid, b] of this._els) {
       b.classList.toggle("on", nid === id);
@@ -1005,7 +1045,7 @@ export class Atlas extends EventTarget {
   }
 
   /** The selected node's neighbours, each once, in reading order: { in, out, all, self }. */
-  _star(hub) {
+  _neighbours(hub) {
     const rank = new Map(this._ordered().map((id, i) => [id, i]));
     const group = dir => {
       const by = new Map();
@@ -1030,7 +1070,7 @@ export class Atlas extends EventTarget {
     const texts = new Map();
     const hub = this._selected;
     if (hub !== null && this._els.has(hub)) {
-      const s = this._star(hub), name = this._title(hub);
+      const s = this._neighbours(hub), name = this._title(hub);
       const say = (x, i, list, template) => {
         const what = x.edges.flatMap(e => [e.label, e.details]).filter(t => typeof t === "string" && t).join(", ");
         const t = fill(template, { n: i + 1, total: list.length, hub: name }) + (what ? `: ${what}` : "");
@@ -1061,20 +1101,20 @@ export class Atlas extends EventTarget {
   /** The next connection of the selection in `group` ("all", "in", "out"), from the focused node.
    *  A node reached some other way first becomes the selection. Null when there is none. */
   _step(focused, group, delta) {
-    const r = this._ring;
+    const r = this._stepping;
     if (!(r && r.hub === this._selected && (focused === r.hub || focused === r.at?.id))) {
-      if (this._selected !== focused) this._select(focused, { focus: false }, false);
-      this._ring = { hub: focused, at: null };
+      if (this._selected !== focused) this.select(focused, { focus: false });
+      this._stepping = { hub: focused, at: null };
     }
-    const { hub, at } = this._ring;
-    const list = this._star(hub)[group];
+    const { hub, at } = this._stepping;
+    const list = this._neighbours(hub)[group];
     if (!list.length) {
       this._announce(fill(this.labels[{ in: "noneIn", out: "noneOut", all: "noneAll" }[group]], { hub: this._title(hub) }));
       return null;
     }
     const i = at?.id === focused ? list.findIndex(x => x.id === at.id && x.dir === at.dir) : -1;
     const j = i < 0 ? (delta > 0 ? 0 : list.length - 1) : (i + delta + list.length) % list.length;
-    this._ring.at = list[j];
+    this._stepping.at = list[j];
     return list[j].id;
   }
 
@@ -1094,42 +1134,30 @@ export class Atlas extends EventTarget {
       for (const d of n.details) ul.append(txt("li", "", d));
       body.append(ul);
     }
-    const rel = (dir, edges, other) => {
-      if (!edges.length) return;
+    // One button per other node, in reading order (the summary counts them, the keyboard steps
+    // through them in this order); parallel edges join their labels and details.
+    const star = this._neighbours(id);
+    for (const dir of ["in", "out"]) {
+      if (!star[dir].length) continue;
       const box = el("div", "rel");
       box.dataset.dir = dir;
-      const t = el(this._heading(1), "r-title");
-      t.textContent = dir === "in" ? this.labels.incoming : this.labels.outgoing;
-      // One button per other node (parallel edges join their labels), as the summary counts them
-      // and the keyboard steps through them.
       const ul = el("ul");
-      const byNode = new Map();
-      for (const e of edges) { if (!byNode.has(other(e))) byNode.set(other(e), []); byNode.get(other(e)).push(e); }
-      for (const [o, es] of byNode) {
-        const li = el("li");
+      for (const x of star[dir]) {
         const b = el("button");
         b.type = "button";
-        const target = this._model.nodes.find(x => x.id === o);
-        b.append(txt("span", "rt", target?.title ?? o));
-        const labels = es.map(e => e.label).filter(Boolean), details = es.map(e => e.details).filter(Boolean);
+        b.append(txt("span", "rt", this._title(x.id)));
+        const labels = x.edges.map(e => e.label).filter(Boolean), details = x.edges.map(e => e.details).filter(Boolean);
         if (labels.length) b.append(txt("span", "rw", labels.join(" · ")));
         if (details.length) b.append(txt("span", "rd", details.join(" · ")));
-        b.addEventListener("click", () => this._select(o, {}, true));
+        b.addEventListener("click", () => this.select(x.id, { focus: true, announce: true }));   // the detail is redrawn
+        const li = el("li");
         li.append(b);
         ul.append(li);
       }
-      box.append(t, ul);
+      box.append(txt(this._heading(1), "r-title", dir === "in" ? this.labels.incoming : this.labels.outgoing), ul);
       body.append(box);
-    };
-    // In reading order of the other node, the order of the keyboard's steps.
-    const rank = new Map(this._ordered().map((x, i) => [x, i]));
-    const byOther = other => (a, b) => (rank.get(other(a)) ?? 0) - (rank.get(other(b)) ?? 0);
-    const edges = this._model.edges;
-    const ins = edges.filter(e => e.to === id && e.from !== id).sort(byOther(e => e.from));
-    const outs = edges.filter(e => e.from === id && e.to !== id).sort(byOther(e => e.to));
-    rel("in", ins, e => e.from);
-    rel("out", outs, e => e.to);
-    if (edges.some(e => e.from === id && e.to === id)) body.append(txt("p", "p-sub p-self", this.labels.selfLoop));
+    }
+    if (star.self) body.append(txt("p", "p-sub p-self", this.labels.selfLoop));
     const head = [];
     if (this._wrap.dataset.panel === "sheet") {
       // A sheet at the foot of the window: its head is a button that folds and unfolds the rest,
@@ -1144,8 +1172,8 @@ export class Atlas extends EventTarget {
       toggle.append(txt("span", "p-name", n.title ?? n.id));
       if (sub) toggle.append(txt("span", "p-sub", sub));
       const counts = el("span", "p-counts");
-      for (const [dir, list, label] of [["in", ins, this.labels.incoming], ["out", outs, this.labels.outgoing]]) {
-        const c = txt("span", "", `${label}: ${new Set(list.map(e => (dir === "in" ? e.from : e.to))).size}`);
+      for (const dir of ["in", "out"]) {
+        const c = txt("span", "", `${dir === "in" ? this.labels.incoming : this.labels.outgoing}: ${star[dir].length}`);
         c.dataset.dir = dir;
         counts.append(c);
       }
@@ -1155,7 +1183,7 @@ export class Atlas extends EventTarget {
       chev.setAttribute("aria-hidden", "true");
       chev.append(svgEl("path", { d: "M4 10l4-4 4 4" }));
       toggle.append(counts, chev);
-      toggle.addEventListener("click", () => this.openDetail(this._sheet !== "open"));
+      toggle.addEventListener("click", () => this.toggleDetail());
       h.append(toggle);
       head.push(h);
     } else {
@@ -1167,44 +1195,34 @@ export class Atlas extends EventTarget {
   }
 
   /**
-   * Opens (or, with false, folds) the detail when it is a sheet at the foot of the window, and keeps
-   * the selected node in view above it. Returns "open" or "peek"; the state holds from one selection
-   * to the next, and in the other arrangements it waits for a sheet.
+   * Opens or folds the detail when it is a sheet at the foot of the window (`force`: true opens,
+   * false folds, left out toggles), keeping the selected node in view above it. Returns whether it is
+   * open. The state holds from one selection to the next, and waits for a sheet in the other
+   * arrangements.
    */
-  openDetail(open = true) {
-    if (this._destroyed) return this._sheet;
-    const want = open ? "open" : "peek";
-    if (want === this._sheet) return want;
-    this._sheet = want;
+  toggleDetail(force) {
+    const open = force ?? this._sheet !== "open";
+    if (this._destroyed || open === (this._sheet === "open")) return this._sheet === "open";
+    this._sheet = open ? "open" : "peek";
     if (this._wrap.dataset.panel === "sheet") {
       this._fillPanel();
       this._placePanel();
       if (open && this._selected !== null) this._reveal(this._els.get(this._selected));
-      this._emit("arrange", this.arrangement);
     }
-    return want;
+    return open;
   }
-
-  /** How the map is laid out now: the board side by side ("flow"), scrolling sideways ("scroll") or
-   *  stacked ("stack"); the detail at the side, below, as a sheet at the foot of the window, inline
-   *  under the node, or none; and the sheet's state. */
-  get arrangement() {
-    const d = this._wrap.dataset;
-    const board = d.mode === "stack" ? "stack" : this._boardWrap.scrollWidth > this._boardWrap.clientWidth + 1 ? "scroll" : "flow";
-    return { board, panel: d.panel ?? "none", sheet: d.panel === "sheet" ? this._sheet : null };
+  openDetail(open = true) {
+    M.deprecated("openDetail()", "toggleDetail(force), which returns whether it is open");
+    return this.toggleDetail(open) ? "open" : "peek";
   }
 
   /** "Triage: 5 incoming, 2 outgoing" (other nodes, each counted once), and the self-loop if any. */
   _summary(id) {
-    const n = this._model.nodes.find(x => x.id === id);
-    const ins = new Set(this._model.edges.filter(e => e.to === id && e.from !== id).map(e => e.from)).size;
-    const outs = new Set(this._model.edges.filter(e => e.from === id && e.to !== id).map(e => e.to)).size;
-    const self = this._model.edges.some(e => e.from === id && e.to === id);
-    const L = this.labels;
+    const s = this._neighbours(id), title = this._title(id), L = this.labels;
     const text = L.summary
-      ? fill(L.summary, { title: n?.title ?? id, incoming: ins, outgoing: outs })
-      : `${n?.title ?? id}: ${ins} ${L.incoming.toLowerCase()}, ${outs} ${L.outgoing.toLowerCase()}`;
-    return self ? `${text}. ${L.selfLoop}` : text;
+      ? fill(L.summary, { title, incoming: s.in.length, outgoing: s.out.length })
+      : `${title}: ${s.in.length} ${L.incoming.toLowerCase()}, ${s.out.length} ${L.outgoing.toLowerCase()}`;
+    return s.self ? `${text}. ${L.selfLoop}` : text;
   }
 
   /** Says `text` in the polite live region; the same text twice is said twice. */
@@ -1251,14 +1269,7 @@ export class Atlas extends EventTarget {
     corridors.cb = { a: cb.t, b: cb.b };
     corridors.ca = ca ? { a: ca.t, b: ca.b } : { a: 0, b: 0 };
     corridors.cz = cz ? { a: cz.t, b: cz.b } : { a: 0, b: 0 };
-    const col = new Map(L.flow.map((l, i) => [l.id, i]));
-    const place = id => {
-      const lane = L.laneOf.get(id);
-      if (L.before && lane === L.before.id) return { kind: "top" };
-      if (L.after && lane === L.after.id) return { kind: "bot" };
-      return { kind: "col", col: col.get(lane) };
-    };
-    return { W, H, boxes, corridors, place, fromFlow };
+    return { W, H, boxes, corridors, place: placeOf(L), fromFlow };
   }
 
   _paint(animate) {
@@ -1289,7 +1300,7 @@ export class Atlas extends EventTarget {
    * or holds their key: bundle by bundle, at one speed, the inputs of a bundle timed to arrive together.
    */
   _draw(r, trace = null) {
-    this._painted = this._geometryKey(r?.W, r?.H);
+    this._paintedKey = this._geometryKey(r?.W, r?.H);
     const old = this._wireEls;
     const next = new Map();
     this._wires = r ? r.wires : [];
@@ -1350,17 +1361,18 @@ export class Atlas extends EventTarget {
     return { nodes, decor, moving: this._moving() };
   }
 
-  /** Stops the current edit's motion where it is (never at its end: the next one starts from there). */
-  _stopMotion(all) {
-    const running = [...this._animations, ...this._cues];
+  /**
+   * Stops the current edit's motion: "finish" jumps to its end (settle), the reduced-motion cues
+   * included, "cancel" drops it with the
+   * ghosts of removed nodes, "interrupt" (a new edit) drops it where it is, since the next move starts
+   * from what is on screen, and lets ghosts fade on. The end callback sees it is no longer current.
+   */
+  _stopMotion(how) {
+    const running = this._animations;
     this._animations = [];
-    this._cues = [];
-    running.forEach(a => a.cancel());
-    if (all) {
-      this._ghostAnims.forEach(a => a.cancel());
-      this._ghostAnims = [];
-      this._ghosts.replaceChildren();
-    }
+    for (const a of running) how === "finish" ? a.finish() : a.cancel();
+    if (how === "finish") for (const a of this._board.getAnimations({ subtree: true })) if (a.id === CUE) a.finish();
+    if (how !== "interrupt") this._ghosts.replaceChildren();
   }
 
   _transition(first, diff, mode) {
@@ -1374,7 +1386,7 @@ export class Atlas extends EventTarget {
     const decor = [...board.querySelectorAll("[data-key]")].map(e => [e, e.getBoundingClientRect()]);
     const r = this._route();
     const css = mode === "reduce" ? getComputedStyle(this._wrap) : null;
-    const tint = css ? `color-mix(in srgb, ${css.getPropertyValue("--focus").trim() || "currentColor"} 22%, ${css.getPropertyValue("--sheet").trim() || "transparent"})` : "";
+    const tint = css ? `color-mix(in srgb, ${css.getPropertyValue("--focus").trim() || "currentColor"} 22%, ${css.getPropertyValue("--surface").trim() || "transparent"})` : "";
 
     const added = [...now.keys()].filter(id => !first.nodes.has(id));
     const removed = [...first.nodes.keys()].filter(id => !now.has(id));
@@ -1392,12 +1404,12 @@ export class Atlas extends EventTarget {
       this._draw(r, null);
       const changed = new Set([...moves.map(m => m.id), ...(diff?.nodes.changed ?? [])].filter(id => this._els.has(id)));
       // A tint that fades: an outline would hide the focus ring of a focused node.
-      for (const id of changed) this._cues.push(this._els.get(id).animate([{ backgroundColor: tint }, {}], { duration: MOTION.cue, easing: "ease-out" }));
-      for (const id of added) this._cues.push(this._els.get(id).animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: "ease-out" }));
+      for (const id of changed) this._els.get(id).animate([{ backgroundColor: tint }, {}], { id: CUE, duration: MOTION.cue, easing: "ease-out" });
+      for (const id of added) this._els.get(id).animate([{ opacity: 0 }, { opacity: 1 }], { id: CUE, duration: 150, easing: "ease-out" });
       return;
     }
 
-    const plan = planMove(moves, this._layout.direction);
+    const nodesMs = moves.length ? moveMs(Math.max(...moves.map(m => Math.hypot(m.dx, m.dy)))) : 0;
     const decorMoves = [], decorNew = [];
     for (const [e, z] of decor) {
       const a = first.decor.get(e.dataset.key);
@@ -1406,12 +1418,12 @@ export class Atlas extends EventTarget {
       if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) decorMoves.push({ e, dx, dy });
     }
     // Titles and boxes keep the timing of the nodes; alone, they take the time their own travel needs.
-    const moveMs = plan.ms || (decorMoves.length ? planMove(decorMoves.map(m => ({ id: "", dx: m.dx, dy: m.dy })), this._layout.direction).ms : 0);
+    const ms = nodesMs || (decorMoves.length ? moveMs(Math.max(...decorMoves.map(m => Math.hypot(m.dx, m.dy)))) : 0);
 
     // The wires: unchanged ones stay, ones that keep their shape reshape with the nodes, the rest fade
     // out and trace again at the end. Wires already reshaping when this edit came all fade.
     const old = this._wireEls;
-    const morph = MORPH && !plan.split && !first.moving && moveMs > 0;
+    const morph = MORPH && !first.moving && ms > 0;
     const reshape = [], fade = [], trace = new Set();
     const seen = new Set();
     for (const w of r?.wires ?? []) {
@@ -1435,23 +1447,17 @@ export class Atlas extends EventTarget {
       g.inert = true;
       Object.assign(g.style, { position: "absolute", left: `${a.left - ox}px`, top: `${a.top - oy}px`, width: `${a.width}px`, height: `${a.height}px`, minWidth: "0", minHeight: "0", margin: "0" });
       this._ghosts.append(g);
-      const ga = g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: MOTION.exit, easing: MOTION.exitEase, fill: "forwards" });
-      ga.finished.then(() => g.remove(), () => g.remove());
-      this._ghostAnims.push(ga);
+      g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: MOTION.exit, easing: MOTION.exitEase, fill: "forwards" }).finished.then(() => g.remove(), () => g.remove());
     }
     for (const o of fade) for (const e of o.els) anims.push(e.animate([{ opacity: 1 }, { opacity: 0 }], { duration: MOTION.exit, easing: MOTION.exitEase, fill: "forwards" }));
     if (removed.length || fade.length) t = MOTION.exit;
 
-    // Move: every node, title and box from where it was seen, all at once (or along the flow, then
-    // across it), for as long as the longest travel needs.
+    // Move: every node, title and box from where it was seen, all at once, for as long as the
+    // longest travel needs.
     const offset = (dx, dy) => `translate(${dx}px, ${dy}px)`;
-    const frames = (dx, dy, mid) => mid
-      ? [{ transform: offset(dx, dy), easing: MOTION.ease }, { transform: offset(mid[0], mid[1]), offset: plan.f, easing: MOTION.ease }, { transform: "none" }]
-      : [{ transform: offset(dx, dy) }, { transform: "none" }];
-    const timing = { duration: moveMs, delay: t, easing: plan.split ? "linear" : MOTION.ease, fill: "backwards" };
-    const vertical = this._layout.direction === "down" || this._layout.direction === "up";
-    for (const m of plan.moves) anims.push(this._els.get(m.id).animate(frames(m.dx, m.dy, m.mid), timing));
-    for (const m of decorMoves) anims.push(m.e.animate(frames(m.dx, m.dy, plan.split ? (vertical ? [m.dx, 0] : [0, m.dy]) : null), timing));
+    const timing = { duration: ms, delay: t, easing: MOTION.ease, fill: "backwards" };
+    for (const m of moves) anims.push(this._els.get(m.id).animate([{ transform: offset(m.dx, m.dy) }, { transform: "none" }], timing));
+    for (const m of decorMoves) anims.push(m.e.animate([{ transform: offset(m.dx, m.dy) }, { transform: "none" }], timing));
     for (const [o, w] of reshape) {
       // Already drawn: the trace's dashes were cut to the old length and would leave the end bare.
       for (const e of [o.halo, o.line]) { e.classList.remove("draw"); e.setAttribute("d", w.d); anims.push(e.animate([{ d: `path("${o.d}")` }, { d: `path("${w.d}")` }], timing)); }
@@ -1465,7 +1471,7 @@ export class Atlas extends EventTarget {
       o.d = w.d;
       o.screen = w.screen;
     }
-    if (moveMs && (plan.moves.length || decorMoves.length)) t += moveMs;
+    if (ms) t += ms;
 
     // Enter: new nodes, titles and boxes.
     const enter = { duration: MOTION.enter, delay: t, easing: MOTION.enterEase, fill: "backwards" };
@@ -1520,7 +1526,7 @@ export class Atlas extends EventTarget {
     const tall = this._sheet === "open" ? Math.min(Math.max(0.42 * innerHeight, 280), innerHeight - 120) + 12 : 0;
     const reserve = sheet ? Math.max(tall, Math.ceil(innerHeight - this._panel.getBoundingClientRect().top)) + 12 : 0;
     b.style.scrollMarginBottom = sheet ? `${reserve}px` : "";
-    b.scrollIntoView({ block: "nearest", inline: "nearest", behavior: this.options.animate && !instant && !reducedMotion() ? "smooth" : "auto" });
+    b.scrollIntoView({ block: "nearest", inline: "nearest", behavior: this._options.animate && !instant && !reducedMotion() ? "smooth" : "auto" });
   }
 
   _ordered() {
@@ -1552,7 +1558,7 @@ export class Atlas extends EventTarget {
     if (key === "Escape") {
       // From a connection, back to the selection; on the selection, clear it. Without a selection
       // the key is not used here, and goes on (to a dialog around the map, for example).
-      this._ring = null;
+      this._stepping = null;
       if (this._selected === null) return;
       e.preventDefault();
       e.stopPropagation();
@@ -1569,7 +1575,7 @@ export class Atlas extends EventTarget {
     else if (key === "End") next = lanes[li][lanes[li].length - 1];
     else return;
     e.preventDefault();
-    this._ring = null;
+    this._stepping = null;
     if (next) this._setTabStop(next, true);
   }
 
@@ -1593,94 +1599,11 @@ export class Atlas extends EventTarget {
 }
 
 // -----------------------------------------------------------------------------------------------
-// A batch collects edits on a working copy and commits them as one step.
-
-class Batch {
-  constructor(atlas, model) { this.atlas = atlas; this.model = model; this.warnings = []; this.renames = []; }
-  apply(ops) {
-    const r = M.apply(this.model, ops);
-    this.model = r.model;
-    this.warnings = r.warnings;
-    this.renames.push(...renamesOf(ops));
-    return this;
-  }
-  addNode(node, { index, edges = [] } = {}) {
-    this.apply([{ op: "addNode", node }, ...edges.map(e => ({ op: "addEdge", edge: e }))]);
-    // The document order of every lane becomes its drawn order first (constraints and groups can
-    // draw a lane in another order than the document's): a position counted in drawn order then
-    // lands exactly there, and no existing node changes places. Without flow lanes the new node's
-    // layer is saved too, so the rest of the edit keeps it.
-    const L0 = computeLayout(this.model);
-    this.model = withLayers(withOrder(this.model, L0), L0);
-    // Positions are relative to the node's lane, which may be automatic: anchor on a neighbour.
-    const L = computeLayout(this.model);
-    const peers = L.order.get(L.laneOf.get(node.id)).filter(id => id !== node.id);
-    // The best gap, or the allowed gap nearest the given index: never one that moves existing nodes.
-    index = bestInsertion(this.model, node.id, index);
-    if (!peers.length) return this;
-    return this.apply(index < peers.length
-      ? { op: "moveNode", id: node.id, before: peers[index] }
-      : { op: "moveNode", id: node.id, after: peers[peers.length - 1] });
-  }
-  connect(from, to, opts = {}) { return this.apply({ op: "addEdge", edge: clean({ from, to, ...opts }) }); }
-  removeNode(id) { return this.apply({ op: "removeNode", id }); }
-  updateNode(id, changes) { return this.apply({ op: "updateNode", id, changes }); }
-  moveNode(id, opts = {}) { return this.apply({ op: "moveNode", id, ...opts }); }
-  disconnect(id) { return this.apply({ op: "removeEdge", id }); }
-  updateEdge(id, changes) { return this.apply({ op: "updateEdge", id, changes }); }
-  addLane(lane, { index } = {}) { return this.apply({ op: "addLane", lane, index }); }
-  updateLane(id, changes) { return this.apply({ op: "updateLane", id, changes }); }
-  addGroup(group) { return this.apply({ op: "addGroup", group }); }
-  updateGroup(id, changes) { return this.apply({ op: "updateGroup", id, changes }); }
-  addConstraint(constraint) { return this.apply({ op: "addConstraint", constraint }); }
-  setMeta(changes) { return this.apply({ op: "setMeta", changes }); }
-}
-
-// -----------------------------------------------------------------------------------------------
 // Helpers
 
 /** The renames made by operations, in order: [from, to] pairs. */
 function renamesOf(ops) {
   return (Array.isArray(ops) ? ops : [ops]).filter(o => o?.op === "renameNode" && typeof o.from === "string" && typeof o.to === "string").map(o => [o.from, o.to]);
-}
-
-/** A model whose node order follows a layout's lane order (the new sketch). */
-function withOrder(model, L, keepPinned = false) {
-  const m = M.clone(model);
-  const pos = new Map();
-  let k = 0;
-  for (const lane of [L.before, ...L.flow, L.after].filter(Boolean)) for (const id of L.order.get(lane.id)) pos.set(id, k++);
-  const original = new Map(m.nodes.map((n, i) => [n.id, i]));
-  if (keepPinned) {
-    // Pinned nodes keep their index inside their lane.
-    const byLane = new Map();
-    for (const n of model.nodes) {
-      const lane = L.laneOf.get(n.id);
-      if (!byLane.has(lane)) byLane.set(lane, []);
-      byLane.get(lane).push(n.id);
-    }
-    for (const [lane, before] of byLane) {
-      const after = L.order.get(lane).filter(id => !model.nodes.find(n => n.id === id)?.pinned);
-      const merged = [];
-      let j = 0;
-      for (const id of before) merged.push(model.nodes.find(n => n.id === id)?.pinned ? id : after[j++]);
-      const base = Math.min(...before.map(id => pos.get(id)));
-      merged.forEach((id, i) => pos.set(id, base + i));
-    }
-  }
-  m.nodes.sort((a, b) => (pos.get(a.id) ?? original.get(a.id)) - (pos.get(b.id) ?? original.get(b.id)));
-  return m;
-}
-
-/** Parallel edges (same from and to) travel as one wire. */
-function mergeParallel(edges) {
-  const out = new Map();
-  for (const e of edges) {
-    const key = `${e.from}\u0000${e.to}`;
-    if (!out.has(key)) out.set(key, { id: e.id, from: e.from, to: e.to, ids: [] });
-    out.get(key).ids.push(e.id);
-  }
-  return [...out.values()];
 }
 
 function pathOf(points) {
@@ -1725,10 +1648,6 @@ function manhattan(p) {
   return L;
 }
 
-function reverseTracks(tracks) {
-  return [...tracks].reverse();
-}
-
 function reducedMotion() {
   return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
@@ -1758,11 +1677,6 @@ function txt(tag, className, text) {
   return e;
 }
 
-function cls(e, name) {
-  e.classList.add(name);
-  return e;
-}
-
 function svgEl(tag, attrs = {}) {
   const e = document.createElementNS(NS, tag);
   for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
@@ -1777,4 +1691,3 @@ function f(n) {
   return Number(n).toFixed(1);
 }
 
-export { M as model };

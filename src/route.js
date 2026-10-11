@@ -24,6 +24,10 @@ export const ROUTE = Object.freeze({
   channelStep: 9,  // distance between tracks in a channel
   portPad: 10,     // closest a port gets to a corner, on the long side of a node
   portStep: 10,    // distance between ports on a side
+  minGutter: 56,   // narrowest corridors: between lanes, at the margins, beside the bands, outside them
+  minOuter: 26,
+  minChannel: 30,
+  minBand: 12,
   minSeparation: 6,
   arrow: 8,
   radius: 7,
@@ -46,7 +50,7 @@ for (let n = 2; n <= 6; n++) {
  * L = start of the flow, R = end, T = towards the "before" band, B = towards the "after" band).
  * `pos(id)` gives abstract or measured centres {u, v}; `place(id)` gives {kind, col}.
  */
-export function topology(from, to, place, pos, channels) {
+function topology(from, to, place, pos, channels) {
   const A = place(from), C = place(to), a = pos(from), c = pos(to);
   const channel = (v1, v2) => {
     const up = Math.abs(v1 - channels.ct) + Math.abs(v2 - channels.ct);
@@ -75,14 +79,14 @@ export function topology(from, to, place, pos, channels) {
 }
 
 /** Groups the wires touching `selected` into bundles (same direction, sides and corridors). */
-export function bundles(selected, edges, place, pos, channels) {
+function bundles(selected, edges, place, pos, channels) {
   const wires = [];
   for (const e of edges) {
     if (e.from === e.to || (e.from !== selected && e.to !== selected)) continue;
     const tp = topology(e.from, e.to, place, pos, channels);
     const k = e.from === selected ? "out" : "in";
     wires.push({
-      id: e.id, ids: e.ids ?? [e.id], from: e.from, to: e.to, k, ...tp,
+      id: e.id, ids: e.ids ?? [e.id], from: e.from, to: e.to, k,
       far: k === "out" ? e.to : e.from,
       sideS: k === "out" ? tp.s : tp.e,
       sideF: k === "out" ? tp.e : tp.s,
@@ -103,16 +107,35 @@ export function bundles(selected, edges, place, pos, channels) {
   return { wires, bundles: list };
 }
 
+/** Where a node sits for routing: in the band before the flow ("top"), after it ("bot"), or in a
+ *  flow column (`col`). `L` is a layout. */
+export function placeOf(L) {
+  const col = new Map(L.flow.map((l, i) => [l.id, i]));
+  return id => {
+    const lane = L.laneOf.get(id);
+    if (L.before && lane === L.before.id) return { kind: "top" };
+    if (L.after && lane === L.after.id) return { kind: "bot" };
+    return { kind: "col", col: col.get(lane) };
+  };
+}
+
 /**
  * How many tracks every corridor and how many ports every node side need, over every possible
- * selection. Sizing corridors for the worst case means selecting a node never moves anything.
+ * selection, from abstract positions (u = column, v = share of the rows; bands above and below).
+ * Sizing corridors for the worst case means selecting a node never moves anything.
  */
-export function demand(nodeIds, edges, place, pos, channels) {
+export function demand(model, L) {
+  const place = placeOf(L), N = L.flow.length, bandU = new Map();
+  for (const band of [L.before, L.after]) if (band) L.order.get(band.id).forEach((id, i, a) => bandU.set(id, (i + 0.5) / a.length * N - 0.5));
+  const pos = id => {
+    const p = place(id);
+    return p.kind === "col" ? { u: p.col, v: (L.slots.get(id) + 0.5) / L.rows } : { u: bandU.get(id), v: p.kind === "top" ? -0.5 : 1.5 };
+  };
   const tracks = new Map();
   const ports = new Map();
   const bump = (map, key, n) => map.set(key, Math.max(map.get(key) ?? 0, n));
-  for (const id of nodeIds) {
-    const { wires, bundles: bs } = bundles(id, edges, place, pos, channels);
+  for (const { id } of model.nodes) {
+    const { wires, bundles: bs } = bundles(id, model.edges, place, pos, { ct: 0, cb: 1 });
     const perCorridor = new Map();
     const perSide = new Map();
     bs.forEach(b => {
@@ -126,11 +149,16 @@ export function demand(nodeIds, edges, place, pos, channels) {
   return { tracks, ports };
 }
 
-/** Width a corridor needs for `n` tracks. */
-export function corridorSize(n, kind) {
-  const pad = kind === "g" ? ROUTE.gutterPad : ROUTE.channelPad;
-  const step = kind === "g" ? ROUTE.trackStep : ROUTE.channelStep;
-  return n <= 0 ? 0 : 2 * pad + (n - 1) * step + 2;
+/** Widths of the corridors for a demand on `N` flow columns: gutters g[0..N] and channels. */
+export function corridorWidths(need, N) {
+  const size = (c, min) => {
+    const n = need.tracks.get(c) ?? 0, g = c[0] === "g";
+    return Math.max(min, n <= 0 ? 0 : 2 * (g ? ROUTE.gutterPad : ROUTE.channelPad) + (n - 1) * (g ? ROUTE.trackStep : ROUTE.channelStep) + 2);
+  };
+  return {
+    g: Array.from({ length: N + 1 }, (_, k) => size("g" + k, k === 0 || k === N ? ROUTE.minOuter : ROUTE.minGutter)),
+    ct: size("ct", ROUTE.minChannel), cb: size("cb", ROUTE.minChannel), ca: size("ca", ROUTE.minBand), cz: size("cz", ROUTE.minBand),
+  };
 }
 
 /** Length a node side needs for `n` ports. */
@@ -221,7 +249,7 @@ export function route(selected, edges, g) {
       const k = pts.map(p => p.u + "," + p.v).join(" ");
       if (k === shape[i]) continue;
       shape[i] = k;
-      const s = segments(pts);
+      const s = pts.slice(1).map((q, j) => [pts[j], q]);
       segsOf[i] = s;
       let len = 0;
       for (const [p, q] of s) len += Math.abs(p.u - q.u) + Math.abs(p.v - q.v);
@@ -247,6 +275,29 @@ export function route(selected, edges, g) {
     return total + length * 1e-5;
   };
 
+  // Moves each item of each list to the place where the score is lowest, a few passes while that
+  // helps and the budget lasts (with `clean`, also while crossings remain). Returns the score reached.
+  const improve = (ls, clean) => {
+    let cur = score();
+    const go = () => !over() && (!clean || cur >= 1);
+    for (let pass = 0, moved = true; moved && pass < 3 && go(); pass++) {
+      moved = false;
+      for (const list of ls) for (let i = 0; i < list.length && go(); i++) {
+        const item = list[i];
+        let at = i;
+        list.splice(i, 1);
+        for (let j = 0; j <= list.length; j++) {
+          list.splice(j, 0, item);
+          const s = score();
+          if (s < cur - 1e-9) { cur = s; at = j; }
+          list.splice(j, 1);
+        }
+        list.splice(at, 0, item);
+        if (at !== i) moved = true;
+      }
+    }
+    return cur;
+  };
   const tryPortsThenTracks = (kp, kc) => {
     const P = lists.get(kp), C = lists.get(kc);
     const baseP = [...P];
@@ -254,23 +305,7 @@ export function route(selected, edges, g) {
     for (const perm of PERMS[baseP.length]) {
       if (over()) break;
       perm.forEach((o, q) => { P[q] = baseP[o]; });
-      for (let pass = 0, moved = true; moved && pass < 3 && !over(); pass++) {
-        moved = false;
-        for (let i = 0; i < C.length && !over(); i++) {
-          const item = C[i];
-          let at = i, s0 = score();
-          C.splice(i, 1);
-          for (let j = 0; j <= C.length; j++) {
-            C.splice(j, 0, item);
-            const s = score();
-            if (s < s0 - 1e-9) { s0 = s; at = j; }
-            C.splice(j, 1);
-          }
-          C.splice(at, 0, item);
-          if (at !== i) moved = true;
-        }
-      }
-      const s = score();
+      const s = improve([C], false);
       if (s < best - 1e-9) { best = s; keepP = [...P]; keepC = [...C]; if (best < 1) break; }
     }
     P.splice(0, P.length, ...keepP);
@@ -326,29 +361,8 @@ export function route(selected, edges, g) {
     }
   }
   // Lists longer than 6 (the ports of a hub, a busy corridor) are too long to try every order:
-  // move each item to its best place, a few passes, while crossings remain and the budget lasts.
-  if (best >= 1) {
-    const long = [...lists.keys()].filter(k => lists.get(k).length > 6);
-    for (let pass = 0, moved = true; moved && pass < 3 && best >= 1 && !over(); pass++) {
-      moved = false;
-      for (const k of long) {
-        const list = lists.get(k);
-        for (let i = 0; i < list.length && best >= 1 && !over(); i++) {
-          const item = list[i];
-          let at = i;
-          list.splice(i, 1);
-          for (let j = 0; j <= list.length; j++) {
-            list.splice(j, 0, item);
-            const s = score();
-            if (s < best - 1e-9) { best = s; at = j; }
-            list.splice(j, 1);
-          }
-          list.splice(at, 0, item);
-          if (at !== i) moved = true;
-        }
-      }
-    }
-  }
+  // move each item to its best place, while crossings remain and the budget lasts.
+  if (best >= 1) best = improve([...lists.keys()].filter(k => lists.get(k).length > 6).map(k => lists.get(k)), true);
   // Still crossings: the ports of a side and the tracks of the corridor next to it decide
   // together. Try every order of the ports and, for each, move every track to its best place.
   if (best >= 1) {
@@ -361,7 +375,6 @@ export function route(selected, edges, g) {
   return {
     wires: wires.map((w, i) => ({ id: w.id, ids: w.ids, from: w.from, to: w.to, k: w.k, h: w.h, points: points(i) })),
     crossings: Math.floor(best),
-    lists: g.debug ? [...lists].map(([k, l]) => `${k}:${l.length}`) : undefined,
   };
 }
 
@@ -384,17 +397,17 @@ function connected(keys, membersOf) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Geometry helpers (shared with the renderer and the audit)
+// Geometry helpers
 
 /** n positions centred in [a, b], at most `step` apart and at least `pad` from either end. */
-export function spread(a, b, n, i, pad, step) {
+function spread(a, b, n, i, pad, step) {
   if (n === 1) return (a + b) / 2;
   const room = Math.max(0, (b - pad) - (a + pad));
   const s = Math.min(step, room / (n - 1));
   return (a + b) / 2 + (i - (n - 1) / 2) * s;
 }
 
-export function simplify(pts) {
+function simplify(pts) {
   const out = [];
   for (const p of pts) {
     const q = out[out.length - 1];
@@ -415,14 +428,8 @@ export function simplify(pts) {
   return out;
 }
 
-export function segments(pts) {
-  const s = [];
-  for (let j = 0; j < pts.length - 1; j++) s.push([pts[j], pts[j + 1]]);
-  return s;
-}
-
 /** 1 for a crossing, 4 for parallel runs closer than the minimum separation that overlap. */
-export function clash(s1, s2) {
+function clash(s1, s2) {
   const flat = s => Math.abs(s[0].v - s[1].v) < 0.5;
   const [a1, a2] = s1, [b1, b2] = s2;
   const inside = (x, p, q) => x > Math.min(p, q) + 0.5 && x < Math.max(p, q) - 0.5;
@@ -444,4 +451,15 @@ function overlap(a1, a2, b1, b2) {
 
 function mid(c) {
   return (c.a + c.b) / 2;
+}
+
+/** Parallel edges (same from and to) travel as one wire. */
+export function mergeParallel(edges) {
+  const out = new Map();
+  for (const e of edges) {
+    const key = `${e.from}\u0000${e.to}`;
+    if (!out.has(key)) out.set(key, { id: e.id, from: e.from, to: e.to, ids: [] });
+    out.get(key).ids.push(e.id);
+  }
+  return [...out.values()];
 }
