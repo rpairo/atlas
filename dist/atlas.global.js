@@ -1,4 +1,4 @@
-/*! Atlas 0.4.0 | MIT | https://github.com/rpairo/atlas */
+/*! Atlas 0.5.0 | MIT | https://github.com/rpairo/atlas */
 (function () {
 "use strict";
 const __modules = {};
@@ -86,7 +86,7 @@ function normalize(input) {
   // A field set to null is a field left out (as in the edit operations), so a board that writes
   // "lane": null loads, and is saved without it, as the schema wants.
   const meta = { direction: "right", ...compact(isObject(doc.meta) ? doc.meta : {}) };
-  const lanes = asArray(doc.lanes).map(l => ({ kind: "flow", ...compact(l) }));
+  const lanes = asArray(doc.lanes).map(l => ({ ...compact(l), kind: l?.kind ?? "flow" }));
   const groups = asArray(doc.groups).map(g => compact(g));
   const nodes = asArray(doc.nodes).map(n => compact(n));
   const constraints = asArray(doc.constraints).map(c => compact(c));
@@ -435,14 +435,12 @@ const APPLY = {
   },
   addLane(m, { lane, index }, p) {
     need(lane && lane.id, p, "lane with an id is required");
-    insertAt(m.lanes, { kind: "flow", ...compact(lane) }, clampIndex(index, m.lanes.length));
+    insertAt(m.lanes, { ...compact(lane), kind: lane?.kind ?? "flow" }, clampIndex(index, m.lanes.length));
   },
   updateLane(m, { id, changes }, p) {
     const i = indexOf(m.lanes, id, p);
     assign(m.lanes[i], changes);
-    // A kind left out falls back to "flow", placed first as normalize() places it: saving twice gives
-    // the same text.
-    if (m.lanes[i].kind == null) m.lanes[i] = { kind: "flow", ...m.lanes[i] };
+    m.lanes[i].kind ??= "flow";   // a kind left out falls back to "flow", as in normalize()
   },
   moveLane(m, { id, index }, p) {
     const [l] = m.lanes.splice(indexOf(m.lanes, id, p), 1);
@@ -624,8 +622,6 @@ function compact(o) {
   return Object.fromEntries(Object.entries(isObject(o) ? o : {}).filter(([k, v]) => v !== undefined && v !== null && !FORBIDDEN_KEYS.has(k)));
 }
 
-/** Merges changes; a value of undefined or null removes the field. */
-/** Merges `changes` into `target`: null or undefined removes a field; the id never changes here. */
 /** The derived id of an edge: `first` (by default `from->to`) or, while taken, `from->to#1`, `#2`… */
 function edgeId(e, used, first = `${e.from}->${e.to}`) {
   let n = 0, id = first;
@@ -633,6 +629,7 @@ function edgeId(e, used, first = `${e.from}->${e.to}`) {
   return id;
 }
 
+/** Merges `changes` into `target`: null or undefined removes a field; the id never changes here. */
 function assign(target, changes) {
   for (const [k, v] of Object.entries(changes ?? {})) {
     if (k === "id" || FORBIDDEN_KEYS.has(k)) continue;
@@ -653,11 +650,19 @@ function byteLength(s) {
   return new TextEncoder().encode(s).length;
 }
 
+const warned = new Set();
+/** Says once per page that `what` is deprecated (since 0.5.0, gone in 0.6.0) and what to use instead. */
+function deprecated(what, instead) {
+  if (warned.has(what)) return;
+  warned.add(what);
+  console.warn(`Atlas: ${what} is deprecated since 0.5.0 and will be removed in 0.6.0; use ${instead}.`);
+}
+
 function clone(v) {
   return v === undefined ? undefined : JSON.parse(JSON.stringify(v));
 }
 
-return { FORMAT, LIMITS, DIRECTIONS, LANE_KINDS, CONSTRAINT_TYPES, AtlasError, parse, normalize, serialize, validate, load, laneOf, UNASSIGNED, OPS, apply, diff, clone };
+return { FORMAT, LIMITS, AtlasError, parse, normalize, serialize, validate, load, laneOf, UNASSIGNED, apply, diff, deprecated, clone };
 })();
 
 __modules.layout = (() => {
@@ -1948,7 +1953,7 @@ __modules.styles = (() => {
 // they only shadow what is inside, and the same rules work without a shadow root.
 
 // The dark defaults, for the system's dark mode and for theme="dark".
-const DARK = `--paper: var(--atlas-paper, #0c141e); --sheet: var(--atlas-sheet, #132030); --ink: var(--atlas-ink, #e3eaf2);
+const DARK = `--paper: var(--atlas-paper, #0c141e); --surface: var(--atlas-surface, var(--atlas-sheet, #132030)); --ink: var(--atlas-ink, #e3eaf2);
   --ink-2: var(--atlas-ink-2, #98a9bd); --rule: var(--atlas-rule, #2a3a4e); --grid: var(--atlas-grid, #152232);
   --out: var(--atlas-out, #e88d52); --in: var(--atlas-in, #6ea8ec); --shadow: var(--atlas-shadow, rgba(0, 0, 0, .55));
   --mark: var(--atlas-mark, #3a3112); --mark-dot: var(--atlas-mark-dot, #e0b43a);`;
@@ -1960,7 +1965,7 @@ const STYLES = `
 }
 .atlas {
   --paper: var(--atlas-paper, #f1f4f7);
-  --sheet: var(--atlas-sheet, #ffffff);
+  --surface: var(--atlas-surface, var(--atlas-sheet, #ffffff));   /* nodes and panel (--atlas-sheet: before 0.5.0) */
   --ink: var(--atlas-ink, #132033);
   --ink-2: var(--atlas-ink-2, #55657c);
   --rule: var(--atlas-rule, #cdd6e1);
@@ -2045,7 +2050,7 @@ ol.nodes > li > .panel { margin-top: 10px; }
 /* Nodes */
 .node {
   position: relative; display: block; width: 100%; min-width: 0; text-align: start;
-  background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 4px;
   padding: 9px 12px 10px; cursor: pointer;
 }
 .node .t { display: block; font-weight: 600; font-size: 14px; line-height: 1.3; overflow-wrap: anywhere; }
@@ -2076,7 +2081,7 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .wire.out { stroke: var(--out); } .wire.in { stroke: var(--in); }
 .wire.backward { stroke-dasharray: 6 4; }
 .arrow.out, .dot.out { fill: var(--out); } .arrow.in, .dot.in { fill: var(--in); }
-.dot { stroke: var(--sheet); stroke-width: 1.5; }
+.dot { stroke: var(--surface); stroke-width: 1.5; }
 @media (prefers-reduced-motion: no-preference) {
   .wire.draw, .casing.draw {
     stroke-dasharray: var(--len) var(--len); stroke-dashoffset: var(--len);
@@ -2092,7 +2097,7 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 
 /* Panel */
 .panel {
-  background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius);
   padding: 18px 18px 20px; display: grid; gap: 12px; min-width: 0;
   grid-template-columns: minmax(0, 1fr);   /* never as wide as a long unbroken title */
 }
@@ -2111,7 +2116,7 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
   display: flex; flex-wrap: nowrap; align-items: baseline; gap: 4px 12px; width: 100%; min-height: 48px; padding: 13px 18px;
   border: 0; border-radius: var(--radius) var(--radius) 0 0; background: none; text-align: start; cursor: pointer;
 }
-.p-toggle:hover { background: color-mix(in srgb, var(--paper) 55%, var(--sheet)); }
+.p-toggle:hover { background: color-mix(in srgb, var(--paper) 55%, var(--surface)); }
 .p-toggle:focus-visible { outline-offset: -2px; }
 .p-toggle .p-lane { flex: none; }
 .p-toggle .p-name { flex: 0 1 auto; min-width: 0; font-size: 1.05rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -2248,14 +2253,63 @@ function segment(p, q) {
 return { MOTION, moveMs, sameShape };
 })();
 
+__modules.boards = (() => {
+// The package's pure functions: a board in, a board out, as saved. They need no DOM and run in Node.
+// The canonical model they work on inside (model.js) never leaves the package.
+
+const M = __modules.model;
+const { layout, withLayers } = __modules.layout;
+
+/**
+ * Checks a board (object or JSON text) and never throws: `{ ok, errors, warnings }`, the same
+ * findings Atlas reports, also for text that is not JSON or a board of the wrong shape.
+ */
+function validate(board) {
+  try {
+    const model = M.normalize(board);
+    const r = M.validate(model);
+    // Placement warnings too (a group split by constraints), as `map.warnings` has them.
+    return r.ok ? { ...r, warnings: [...r.warnings, ...layout(model).warnings] } : r;
+  } catch (e) {
+    if (e instanceof M.AtlasError) return { ok: false, errors: e.errors, warnings: [] };
+    throw e;
+  }
+}
+
+/**
+ * Applies edit operations to a board as one step and returns the edited board, canonical, with the
+ * columns of a board without flow lanes saved in `layer` as Atlas saves them. It does not reorder:
+ * Atlas tidies a board without `meta.ordered` when it loads it. Throws an AtlasError, and changes
+ * nothing, when the board or an operation is invalid.
+ */
+function apply(board, ops) {
+  const { model } = M.apply(M.load(board).model, ops);
+  return M.serialize(withLayers(model, layout(model)));
+}
+
+/** What changed from board `a` to board `b`, by id (the `diff` of `change` events). */
+function diff(a, b) {
+  return M.diff(M.normalize(a), M.normalize(b));
+}
+
+// Deprecated since 0.5.0, removed in 0.6.0: the canonical model is not part of the package.
+const parse = text => (M.deprecated("parse()", "validate() or JSON.parse"), M.parse(text));
+const normalize = input => (M.deprecated("normalize()", "validate() and apply(), which take boards"), M.normalize(input));
+const load = input => (M.deprecated("load()", "validate()"), M.load(input));
+const serialize = model => (M.deprecated("serialize()", "apply(), which returns the board to save"), M.serialize(model));
+
+return { validate, apply, diff, parse, normalize, load, serialize };
+})();
+
 __modules.atlas = (() => {
 // Atlas: renders a board document as a live map and edits it through a small API.
 //
-//   const map = new Atlas(element, { document, selected: "a" });
-//   map.addNode({ id: "b", title: "B", lane: "in" });     // placed in the best gap, animated
-//   map.connect("a", "b", { label: "feeds" });
-//   map.undo();
+//   const map = new Atlas(element);
 //   map.addEventListener("select", e => console.log(e.detail.id));
+//   map.load(board, { selected: "a" });
+//   map.addNode({ id: "b", title: "B", lane: "in" });     // placed in the best gap, animated
+//   map.addEdge({ from: "a", to: "b", label: "feeds" });
+//   map.undo();
 //
 // Pipeline on every change: model → layout (pure) → corridor demand (pure) → DOM → measure →
 // route the selected node's wires (pure) → paint. Text always goes in with textContent, never as
@@ -2277,6 +2331,7 @@ const PANEL_GAP = 20;      // px between the board and a side panel (.atlas gap)
 // elsewhere they fade out and trace again once the nodes are in place.
 const MORPH = typeof CSS !== "undefined" && CSS.supports?.("d", 'path("M0 0")') === true;
 const STATUS = /^[a-z0-9_-]{1,32}$/;
+const CUE = "atlas-cue";     // the id of the reduced-motion cues, which settle() also finishes
 const ARROWS = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] };
 
 const DEFAULT_LABELS = {
@@ -2303,21 +2358,22 @@ let UID = 0;   // a prefix per map for the ids of its descriptions (unique in th
 class Atlas extends EventTarget {
   /**
    * @param host element to render into (a shadow root is attached unless `options.shadow` is false)
-   * @param options.document board (object or JSON text)
-   * @param options.selected id of the node selected at start (default: meta.selected)
-   * @param options.panel "auto" | "side" | "below" | "sheet" | false — where the detail goes (auto: by the room)
+   * @param options.panel "auto" | "side" | "below" | "sheet" | "none": where the detail goes (auto: by the room)
    * @param options.labels texts of the interface (see docs/api.md)
-   * @param options.renderNode (node, button, live) => void — custom node content
+   * @param options.renderNode (node, button, live) => void: custom node content
    * @param options.animate motion: edits move nodes into place, wires trace (default true)
+   * @param options.historyLimit undo steps kept (default 200)
+   * @param options.headingLevel level of lane titles and the detail's title (default 2)
    * @param options.shadow render into a shadow root (default true)
-   * Options and labels set to undefined keep their defaults.
+   * Options and labels set to undefined keep their defaults. The board comes with load().
    */
   constructor(host, options = {}) {
     super();
     this.host = host;
-    this.options = { panel: "auto", animate: true, shadow: true, historyLimit: 200, headingLevel: 2, ...clean(options) };
-    this.labels = { ...DEFAULT_LABELS, ...clean(options.labels ?? {}) };
-    this.root = this.options.shadow ? (host.shadowRoot ?? host.attachShadow({ mode: "open" })) : host;
+    this._options = { panel: "auto", animate: true, shadow: true, historyLimit: 200, headingLevel: 2, ...clean(options) };
+    if (this._options.panel === false) { M.deprecated('panel: false', 'panel: "none"'); this._options.panel = "none"; }
+    this._labels = Object.freeze({ ...DEFAULT_LABELS, ...clean(options.labels ?? {}) });
+    this.root = this._options.shadow ? (host.shadowRoot ?? host.attachShadow({ mode: "open" })) : host;
     this._els = new Map();        // node id → button
     this._items = new Map();      // node id → li
     this._live = new Map();       // node id → { subtitle, status }
@@ -2336,22 +2392,29 @@ class Atlas extends EventTarget {
     this._frame = 0;
     this._mount();
     this._model = M.normalize({ nodes: [] });
-    if (options.document !== undefined) this.load(options.document, { selected: options.selected });
+    if (options.document !== undefined) {
+      M.deprecated("the document option", "load(board, { selected })");
+      this.load(options.document, { selected: options.selected });
+    }
   }
 
   // -------------------------------------------------------------------------------------------
   // Reading
 
-  /** The board as it should be saved (canonical, with the current order as its sketch). */
-  toJSON() { return M.serialize(this._model); }
-  export() { return this.toJSON(); }
+  /** The board as it should be saved (canonical, with the current order as its sketch). Inside a
+   *  batch, toJSON(), node(), edges() and find() read the batch's working copy. */
+  toJSON() { return M.serialize(this._doc); }
+  export() { M.deprecated("export()", "toJSON()"); return this.toJSON(); }
+  get _doc() { return this._batch?.model ?? this._model; }
+  /** The interface texts in use (read-only: they come from the labels option). */
+  get labels() { return this._labels; }
   get rev() { return this._rev; }
   get selected() { return this._selected; }
   /** Warnings of the board (validate) and of its placement (a group split by constraints). */
   get warnings() { return [...(this._warnings ?? []), ...(this._layout?.warnings ?? [])]; }
-  node(id) { const n = this._model.nodes.find(x => x.id === id); return n ? M.clone(n) : null; }
+  node(id) { const n = this._doc.nodes.find(x => x.id === id); return n ? M.clone(n) : null; }
   edges(id) {
-    return this._model.edges.filter(e => e.from === id || e.to === id).map(e => M.clone(e));
+    return this._doc.edges.filter(e => e.from === id || e.to === id).map(e => M.clone(e));
   }
   /** Nodes whose title, subtitle (the live one too) or details contain `text`, ignoring case and
    *  accents, in reading order. Blank text finds nothing. */
@@ -2359,8 +2422,8 @@ class Atlas extends EventTarget {
     const q = fold(text).trim();
     if (!q) return [];
     const hit = n => [n.title, n.subtitle, this._live.get(n.id)?.subtitle, ...(Array.isArray(n.details) ? n.details : [])].some(s => typeof s === "string" && fold(s).includes(q));
-    const rank = new Map(this._ordered().map((id, i) => [id, i]));
-    return this._model.nodes.filter(hit).map(n => n.id).sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0));
+    const rank = new Map(this._ordered().map((id, i) => [id, i]));   // nodes not drawn yet (a batch) go last
+    return this._doc.nodes.filter(hit).map(n => n.id).sort((a, b) => (rank.get(a) ?? rank.size) - (rank.get(b) ?? rank.size));
   }
   /** The marked nodes (see mark()), in reading order. */
   get marked() { return [...this._marks]; }
@@ -2375,15 +2438,17 @@ class Atlas extends EventTarget {
    * marked node is described to screen readers as "Match 2 of 5"; the count is the page's to say.
    */
   mark(ids) {
-    if (this._destroyed) return;
+    if (this._destroyed) return this;
+    if (this._batch) return this._later(() => this.mark(ids));
     const want = new Set(ids == null ? [] : [...ids].filter(id => this._els.has(id)));
     const next = this._ordered().filter(id => want.has(id));
-    if (next.join("\u0000") === this._marks.join("\u0000")) return;
+    if (next.join("\u0000") === this._marks.join("\u0000")) return this;
     this._marks = next;
     this._markAt = null;
     this._highlight();
     // Not announced: the page's search box says how many it found (both would be heard).
     this._emit("mark", { ids: [...next], current: null });
+    return this;
   }
 
   /**
@@ -2408,6 +2473,7 @@ class Atlas extends EventTarget {
 
   /** Nodes that contradict their lane: most of their edges run backwards. Advice, never applied. */
   suggestions() {
+    M.deprecated("suggestions()", "the warnings of validate() and map.warnings");
     const out = [];
     const L = this._layout;
     if (!L) return out;
@@ -2424,11 +2490,14 @@ class Atlas extends EventTarget {
   // -------------------------------------------------------------------------------------------
   // Loading and editing. Every edit is one undoable step and fires a "change" event.
 
-  /** Replaces the board. A board not yet ordered by Atlas is tidied once (fewest crossings). */
-  load(input, { optimize, selected } = {}) {
+  /** Replaces the board. A board not yet ordered by Atlas is reordered once (fewest crossings);
+   *  `reorder: true` forces that, `false` prevents it. */
+  load(input, { reorder, optimize, selected } = {}) {
     if (this._destroyed) return this;
+    this._noBatch("load()");
+    if (optimize !== undefined) M.deprecated("load(board, { optimize })", "load(board, { reorder })");
     const { model, warnings } = M.load(input);
-    const tidy = optimize ?? model.meta.ordered !== true;
+    const tidy = reorder ?? optimize ?? model.meta.ordered !== true;
     // Without flow lanes the layers are saved with the board, the ones the order was tidied for:
     // later edits keep them wherever the edges allow.
     const L = computeLayout(model, { optimize: tidy });
@@ -2440,80 +2509,137 @@ class Atlas extends EventTarget {
     this._future = [];
     this._live.clear();
     this._sheet = "peek";
+    const hadMarks = this._marks.length > 0;
     this._marks = [];
     this._markAt = null;
     this._rev++;
     this._render({ animate: false });
     const first = selected === undefined ? (m.meta.selected ?? null) : selected;
-    this.select(first && m.nodes.some(n => n.id === first) ? first : null, { focus: false, animate: this.options.animate });
+    this.select(first && m.nodes.some(n => n.id === first) ? first : null, { reveal: false });
     this._emit("change", { rev: this._rev, diff: null, warnings: this.warnings });
+    if (hadMarks) this._emit("mark", { ids: [], current: null });
     return this;
   }
 
-  /** Applies raw operations (see model.js OPS) as one step. */
+  /** Applies raw operations (see the operations in docs/api.md) as one step. Returns the map. */
   apply(ops) {
-    const before = this._model;
-    const { model, warnings } = M.apply(before, ops);
-    this._commit(before, model, warnings, renamesOf(ops));
-    return this._rev;
+    if (this._destroyed) return this;
+    const b = this._batch;
+    const { model, warnings } = M.apply(this._doc, ops);
+    if (b) Object.assign(b, { model, warnings, renames: [...b.renames, ...renamesOf(ops)] });
+    else this._commit(this._model, model, warnings, renamesOf(ops));
+    return this;
   }
 
-  /** Groups several edits into one undoable step: map.batch(m => { m.addNode(...); m.connect(...) }). */
+  /**
+   * Makes the edits of `fn(map)` one undoable step: map.batch(m => m.addNode(…).addEdge(…)). Inside,
+   * every editing method edits a working copy, which toJSON(), node(), edges() and find() read;
+   * select(), mark() and setState() wait for the end, when the map redraws once. An error inside
+   * leaves the board as it was (a batch inside a batch, its own part). load(), undo(), redo() and
+   * reorder() are refused inside.
+   */
   batch(fn) {
-    const before = this._model;
-    const proxy = new Batch(this, before);
-    fn(proxy);
-    if (proxy.model !== before) this._commit(before, proxy.model, proxy.warnings, proxy.renames);
-    return this._rev;
+    if (this._destroyed) return this;
+    const outer = this._batch;
+    const start = outer ?? { model: this._model, warnings: this._warnings, renames: [], later: [] };
+    this._batch = { ...start, later: [...start.later] };
+    let b;
+    try { fn(this); b = this._batch; } finally { this._batch = outer; }
+    if (outer) Object.assign(outer, b);
+    else {
+      if (b.model !== start.model) this._commit(start.model, b.model, b.warnings, b.renames);
+      for (const f of b.later) f();
+    }
+    return this;
   }
 
-  /** Adds a node. Without an explicit index it goes to the gap with fewest crossings. */
-  addNode(node, { index, edges = [] } = {}) {
-    return this.batch(b => b.addNode(node, { index, edges }));
+  /** Inside a batch, a call that needs the map drawn runs when the batch ends. */
+  _later(f) {
+    this._batch.later.push(f);
+    return this;
+  }
+
+  /** Adds a node with its optional edges: next to the node named by `before` or `after`, or without
+   *  them in the gap of its lane with the fewest crossings (the allowed gap nearest `index`, when
+   *  given); existing nodes never change places. */
+  addNode(node, { index, before, after, edges = [] } = {}) {
+    return this.batch(() => {
+      this.apply([{ op: "addNode", node }, ...edges.map(e => ({ op: "addEdge", edge: e }))]);
+      // The document order of every lane becomes its drawn order first (constraints and groups can
+      // draw a lane in another order than the document's): a position counted in drawn order then
+      // lands exactly there, and no existing node changes places. Without flow lanes the new node's
+      // layer is saved too, so the rest of the edit keeps it.
+      const b = this._batch, L0 = computeLayout(b.model);
+      b.model = withLayers(withOrder(b.model, L0), L0);
+      if (before != null || after != null) return this.apply({ op: "moveNode", id: node.id, before, after });
+      // Positions are relative to the node's lane, which may be automatic: anchor on a neighbour.
+      const L = computeLayout(b.model);
+      const peers = L.order.get(L.laneOf.get(node.id)).filter(id => id !== node.id);
+      // The best gap, or the allowed gap nearest the given index: never one that moves existing nodes.
+      const at = bestInsertion(b.model, node.id, index);
+      if (peers.length) this.apply(at < peers.length ? { op: "moveNode", id: node.id, before: peers[at] } : { op: "moveNode", id: node.id, after: peers.at(-1) });
+    });
   }
   updateNode(id, changes) { return this.apply({ op: "updateNode", id, changes }); }
-  moveNode(id, { lane, index } = {}) { return this.apply({ op: "moveNode", id, lane, index }); }
+  moveNode(id, { lane, index, before, after } = {}) { return this.apply({ op: "moveNode", id, lane, index, before, after }); }
   removeNode(id) { return this.apply({ op: "removeNode", id }); }
   /** Changes an id. The node keeps its element on screen (and its live state, focus and selection),
    *  also when undo or redo renames it back. */
   renameNode(from, to) { return this.apply({ op: "renameNode", from, to }); }
-  connect(from, to, { id, label, details, type } = {}) {
-    return this.apply({ op: "addEdge", edge: clean({ id, from, to, label, details, type }) });
-  }
+  addEdge(edge) { return this.apply({ op: "addEdge", edge }); }
   updateEdge(id, changes) { return this.apply({ op: "updateEdge", id, changes }); }
-  disconnect(idOrPair) {
-    const id = typeof idOrPair === "string" ? idOrPair
-      : this._model.edges.find(e => e.from === idOrPair?.from && e.to === idOrPair?.to)?.id;
-    if (id === undefined) {
-      throw new M.AtlasError([{ path: "", code: "invalid", message: `no edge from "${idOrPair?.from}" to "${idOrPair?.to}"` }]);
-    }
-    return this.apply({ op: "removeEdge", id });
-  }
+  removeEdge(id) { return this.apply({ op: "removeEdge", id }); }
   addLane(lane, { index } = {}) { return this.apply({ op: "addLane", lane, index }); }
   updateLane(id, changes) { return this.apply({ op: "updateLane", id, changes }); }
-  moveLane(id, index) { return this.apply({ op: "moveLane", id, index }); }
+  moveLane(id, where = {}) {
+    if (typeof where === "number") { M.deprecated("moveLane(id, index)", "moveLane(id, { index })"); where = { index: where }; }
+    return this.apply({ op: "moveLane", id, index: where.index });
+  }
   removeLane(id, { moveTo } = {}) { return this.apply({ op: "removeLane", id, moveTo }); }
   addGroup(group) { return this.apply({ op: "addGroup", group }); }
   updateGroup(id, changes) { return this.apply({ op: "updateGroup", id, changes }); }
   removeGroup(id) { return this.apply({ op: "removeGroup", id }); }
   addConstraint(constraint) { return this.apply({ op: "addConstraint", constraint }); }
   removeConstraint(index) { return this.apply({ op: "removeConstraint", index }); }
-  /** Optionally moves a node, then marks it pinned: reorderAll() leaves it where it is. */
-  pin(id, { lane, index } = {}) {
-    return this.batch(b => {
-      if (lane !== undefined || index !== undefined) b.apply({ op: "moveNode", id, lane, index });
-      b.apply({ op: "updateNode", id, changes: { pinned: true } });
-    });
-  }
-  unpin(id) { return this.apply({ op: "updateNode", id, changes: { pinned: null } }); }
   setMeta(changes) { return this.apply({ op: "setMeta", changes }); }
 
-  /**
-   * Reorders every lane for the fewest crossings. With { dryRun: true } it only reports how many
-   * pairs of nodes would swap. Pinned nodes keep their place.
-   */
+  // Deprecated since 0.5.0, removed in 0.6.0.
+  connect(from, to, { id, label, details, type } = {}) {
+    M.deprecated("connect(from, to, options)", "addEdge({ from, to, ...options })");
+    return this.addEdge(clean({ id, from, to, label, details, type }));
+  }
+  disconnect(idOrPair) {
+    M.deprecated("disconnect()", "removeEdge(id)");
+    const id = typeof idOrPair === "string" ? idOrPair : this._doc.edges.find(e => e.from === idOrPair?.from && e.to === idOrPair?.to)?.id;
+    if (id === undefined) throw new M.AtlasError([{ path: "", code: "invalid", message: `no edge from "${idOrPair?.from}" to "${idOrPair?.to}"` }]);
+    return this.removeEdge(id);
+  }
+  pin(id, { lane, index } = {}) {
+    M.deprecated("pin()", "updateNode(id, { pinned: true }) (and moveNode in the same batch)");
+    return this.batch(() => {
+      if (lane !== undefined || index !== undefined) this.moveNode(id, { lane, index });
+      this.updateNode(id, { pinned: true });
+    });
+  }
+  unpin(id) { M.deprecated("unpin()", "updateNode(id, { pinned: null })"); return this.updateNode(id, { pinned: null }); }
   reorderAll({ dryRun = false } = {}) {
+    M.deprecated("reorderAll()", "reorder(), which returns one count");
+    return this._reorder(dryRun);
+  }
+
+  /**
+   * Reorders every lane for the fewest crossings (without flow lanes, the columns too) as one step,
+   * pinned nodes keeping their place. Returns how many pairs of nodes change order; with
+   * { dryRun: true } it only counts them.
+   */
+  reorder({ dryRun = false } = {}) {
+    const { swaps, layers } = this._reorder(dryRun);
+    return swaps + layers;
+  }
+
+  _reorder(dryRun) {
     if (this._destroyed) return { swaps: 0, layers: 0 };
+    this._noBatch("reorder()");
     const now = this._layout ?? computeLayout(this._model);
     // Without flow lanes the layers are computed afresh too, from the edges alone (pinned nodes keep
     // theirs where the edges allow): the reset for the drift that many edits leave. Only Atlas's own
@@ -2548,6 +2674,7 @@ class Atlas extends EventTarget {
   // so undo and redo rename back and forth exactly.
   undo() {
     if (this._destroyed) return false;
+    this._noBatch("undo()");
     const prev = this._history.pop();
     if (!prev) return false;
     this._future.push({ model: this._model, renames: prev.renames });
@@ -2556,6 +2683,7 @@ class Atlas extends EventTarget {
   }
   redo() {
     if (this._destroyed) return false;
+    this._noBatch("redo()");
     const next = this._future.pop();
     if (!next) return false;
     this._history.push({ model: this._model, renames: next.renames });
@@ -2563,25 +2691,43 @@ class Atlas extends EventTarget {
     return true;
   }
   /** Forgets every undo and redo step (for example once the board is saved). */
-  clearHistory() { this._history = []; this._future = []; }
+  clearHistory() { this._history = []; this._future = []; return this; }
+
+  /** The panel option changed (the panel attribute of <atlas-map>). */
+  _setPanel(panel) {
+    this._options.panel = panel;
+    this._schedule();
+  }
+
+  _noBatch(what) {
+    if (this._batch) throw new M.AtlasError([{ path: "", code: "invalid", message: `${what} cannot run inside batch()` }]);
+  }
   get canUndo() { return this._history.length > 0; }
   get canRedo() { return this._future.length > 0; }
 
   /** Live content (for example from a home automation system): never moves anything. */
-  setState(id, { subtitle, status } = {}) {
-    if (this._destroyed || !this._els.has(id)) return;
+  setState(id, state = {}) {
+    if (this._batch) return this._later(() => this.setState(id, state));
+    const { subtitle, status } = state;
+    if (this._destroyed || !this._els.has(id)) return this;
+    if (status != null && !STATUS.test(String(status))) {
+      throw new M.AtlasError([{ path: "status", code: "invalid", message: `status "${status}" is not [a-z0-9_-]{1,32}` }]);
+    }
     const s = { ...(this._live.get(id) ?? {}) };
     if (subtitle !== undefined) s.subtitle = subtitle === null ? undefined : String(subtitle);
-    if (status !== undefined) s.status = status !== null && STATUS.test(String(status)) ? String(status) : undefined;
+    if (status !== undefined) s.status = status === null ? undefined : String(status);
     this._live.set(id, s);
     this._fillNode(this._model.nodes.find(n => n.id === id), this._els.get(id));
+    return this;
   }
 
-  /** Selects a node (or null), shows its wires and its detail. `announce` is for selections a person
-   *  made: screen readers then hear the summary. */
-  select(id, { focus = true, animate = this.options.animate, reveal = focus, announce = false } = {}) {
-    if (this._destroyed) return;
-    if (id !== null && !this._els.has(id)) id = null;
+  /** Selects a node (null clears), shows its wires and its detail, and scrolls it into view
+   *  (`reveal`). `focus` also moves keyboard focus to it; `announce`, for selections a person made,
+   *  makes screen readers say its summary. An unknown id changes nothing. */
+  select(id, options = {}) {
+    if (this._batch) return this._later(() => this.select(id, options));
+    const { focus = false, animate = this._options.animate, reveal = true, announce = false } = options;
+    if (this._destroyed || (id !== null && !this._els.has(id))) return this;
     const prev = this._selected;
     if (id !== prev) this._stepping = null;   // keyboard steps belong to one selection
     this._selected = id;
@@ -2595,17 +2741,19 @@ class Atlas extends EventTarget {
     if (id !== null) this._setTabStop(id, focus, reveal);
     if (prev !== id) this._emit("select", { id });
     if (announce) this._announce(id === null ? "" : this._summary(id));
+    return this;
   }
 
   /** Finishes any running transition at once (its end state) and redraws the wires. */
   settle() {
-    if (this._destroyed) return;
+    if (this._destroyed) return this;
     this._stopMotion("finish");
     this._after = null;
     this._paint(false);
     const late = this._revealAfter;
     this._revealAfter = null;
     if (late?.isConnected) this._reveal(late, true);   // settled now: no smooth scroll still to come
+    return this;
   }
 
   /** Frees the map: observers, frames and animations stop and the content is removed. Final: a
@@ -2631,7 +2779,7 @@ class Atlas extends EventTarget {
     // An edit that changes nothing (same title, empty list of operations) makes no undo step.
     if (after === before || JSON.stringify(M.serialize(after)) === JSON.stringify(M.serialize(before))) return;
     this._history.push({ model: before, renames });
-    while (this._history.length > this.options.historyLimit) this._history.shift();
+    while (this._history.length > this._options.historyLimit) this._history.shift();
     this._future = [];
     this._show(after, warnings ?? [], renames);
   }
@@ -2639,6 +2787,8 @@ class Atlas extends EventTarget {
   /** Puts a new version of the board on screen (an edit, undo or redo) and says so. */
   _show(model, warnings, renames) {
     const before = this._model;
+    const marks = () => [...this._marks, this._markAt].join("\u0000");
+    const marked = marks();
     this._model = model;
     this._warnings = warnings;
     this._rev++;
@@ -2647,6 +2797,7 @@ class Atlas extends EventTarget {
     this._render({ animate: true, diff: d });
     this._emit("change", { rev: this._rev, diff: d, warnings: this.warnings });
     if (followed) this._emit("select", { id: this._selected });
+    if (marks() !== marked) this._emit("mark", { ids: [...this._marks], current: this._markAt });
   }
 
   /** A node renamed by an edit, a batch, undo or redo keeps its element on screen (with its live
@@ -2670,7 +2821,6 @@ class Atlas extends EventTarget {
 
   _emit(type, detail) {
     this.dispatchEvent(new CustomEvent(type, { detail }));
-    this.host.dispatchEvent(new CustomEvent(`atlas-${type}`, { detail, bubbles: true, composed: true }));
   }
 
   // -------------------------------------------------------------------------------------------
@@ -2708,7 +2858,7 @@ class Atlas extends EventTarget {
       if (e.key !== "Escape" || this._wrap.dataset.panel !== "sheet" || this._sheet !== "open") return;
       e.preventDefault();
       e.stopPropagation();   // used here: a dialog around the map stays open
-      this.openDetail(false);
+      this.toggleDetail(false);
       if (this._selected !== null) this._setTabStop(this._selected, true);
     });
     // Alt with Left or Right is Back or Forward in Chrome and Edge on Windows and Linux: inside the
@@ -2777,7 +2927,7 @@ class Atlas extends EventTarget {
     const active = this._active();
     const hadFocus = active !== null && this._board.contains(active);
     // Motion: none with animate: false; under reduced motion only cues that do not travel.
-    const mode = !animate || !this.options.animate ? "off" : reducedMotion() ? "reduce" : "full";
+    const mode = !animate || !this._options.animate ? "off" : reducedMotion() ? "reduce" : "full";
     // Where everything is on screen, read before anything is written (and before running motion is
     // stopped: a node in flight starts its next move from where it is seen, not from where it was going).
     const first = mode === "off" ? null : this._snapshot();
@@ -2807,7 +2957,7 @@ class Atlas extends EventTarget {
   /** A heading tag `depth` levels below `headingLevel` (lane titles and the detail's title are at it,
    *  the detail's "Incoming" and "Outgoing" one below), so the map fits the page's outline. */
   _heading(depth) {
-    const level = Math.min(6, Math.max(1, Math.round(Number(this.options.headingLevel) || 2) + depth));
+    const level = Math.min(6, Math.max(1, Math.round(Number(this._options.headingLevel) || 2) + depth));
     return `h${level}`;
   }
 
@@ -2823,7 +2973,7 @@ class Atlas extends EventTarget {
     const reversed = dir === "left" || dir === "up";
     const N = L.flow.length;
     this._wrap.dataset.direction = dir;
-    if (!this.options.animate) this._wrap.dataset.motion = "off"; else delete this._wrap.dataset.motion;
+    if (!this._options.animate) this._wrap.dataset.motion = "off"; else delete this._wrap.dataset.motion;
     const board = this._board;
     const keep = new Set(this._model.nodes.map(n => n.id));
     for (const [id, li] of this._items) if (!keep.has(id)) { li.remove(); this._items.delete(id); this._els.delete(id); this._live.delete(id); }
@@ -3038,8 +3188,8 @@ class Atlas extends EventTarget {
       // Activating the selected node again opens the detail when it is a folded sheet.
       b.addEventListener("click", () => {
         const id = this._idOf.get(b);
-        if (id === this._selected && this._wrap.dataset.panel === "sheet" && this._sheet !== "open") this.openDetail(true);
-        else this.select(id, { announce: true });
+        if (id === this._selected && this._wrap.dataset.panel === "sheet" && this._sheet !== "open") this.toggleDetail(true);
+        else this.select(id, { focus: true, announce: true });
       });
       li.append(b);
       this._items.set(id, li);
@@ -3069,7 +3219,7 @@ class Atlas extends EventTarget {
     b.setAttribute("part", this._partOf(n));
     this._stateParts(n.id, b);
     if (live.status) b.dataset.status = live.status; else delete b.dataset.status;
-    if (this.options.renderNode) { this.options.renderNode(M.clone(n), b, { ...live }); return; }
+    if (this._options.renderNode) { this._options.renderNode(M.clone(n), b, { ...live }); return; }
     const t = txt("span", "t", n.title ?? n.id);
     const sub = live.subtitle ?? n.subtitle;
     const parts = [t];
@@ -3096,8 +3246,8 @@ class Atlas extends EventTarget {
     // swap the arrangement back and forth.
     const was = this._wrap.dataset;
     const mode = width >= Math.min(needed, STACK_BELOW) - (was.mode === "flow" ? 16 : 0) ? "flow" : "stack";
-    const asked = this.options.panel;
-    let panel = asked === false ? "none" : mode === "stack" ? "inline"
+    const asked = this._options.panel;
+    let panel = asked === "none" ? "none" : mode === "stack" ? "inline"
       : ["side", "below", "sheet"].includes(asked) ? asked
       : width >= needed + side - (was.panel === "side" ? 16 : 0) ? "side" : "below";
     const before = `${was.mode}|${was.panel}`, firstTime = was.mode === undefined;
@@ -3111,10 +3261,7 @@ class Atlas extends EventTarget {
       if (this._board.getBoundingClientRect().height + PANEL_GAP + open > vh - 24 - slack) panel = "sheet";
     }
     if (this._wrap.dataset.panel !== panel) this._wrap.dataset.panel = panel;
-    if (`${mode}|${panel}` !== before) {
-      if (!firstTime) this._fillPanel();   // a sheet's head is a toggle
-      this._emit("arrange", this.arrangement);
-    }
+    if (`${mode}|${panel}` !== before && !firstTime) this._fillPanel();   // a sheet's head is a toggle
   }
 
   /** WebKit (Safari) keeps the rows of a grid of subgrids at their old heights when the board gets
@@ -3306,7 +3453,7 @@ class Atlas extends EventTarget {
         const labels = x.edges.map(e => e.label).filter(Boolean), details = x.edges.map(e => e.details).filter(Boolean);
         if (labels.length) b.append(txt("span", "rw", labels.join(" · ")));
         if (details.length) b.append(txt("span", "rd", details.join(" · ")));
-        b.addEventListener("click", () => this.select(x.id, { announce: true }));
+        b.addEventListener("click", () => this.select(x.id, { focus: true, announce: true }));   // the detail is redrawn
         const li = el("li");
         li.append(b);
         ul.append(li);
@@ -3340,7 +3487,7 @@ class Atlas extends EventTarget {
       chev.setAttribute("aria-hidden", "true");
       chev.append(svgEl("path", { d: "M4 10l4-4 4 4" }));
       toggle.append(counts, chev);
-      toggle.addEventListener("click", () => this.openDetail(this._sheet !== "open"));
+      toggle.addEventListener("click", () => this.toggleDetail());
       h.append(toggle);
       head.push(h);
     } else {
@@ -3352,31 +3499,25 @@ class Atlas extends EventTarget {
   }
 
   /**
-   * Opens (or, with false, folds) the detail when it is a sheet at the foot of the window, and keeps
-   * the selected node in view above it. Returns "open" or "peek"; the state holds from one selection
-   * to the next, and in the other arrangements it waits for a sheet.
+   * Opens or folds the detail when it is a sheet at the foot of the window (`force`: true opens,
+   * false folds, left out toggles), keeping the selected node in view above it. Returns whether it is
+   * open. The state holds from one selection to the next, and waits for a sheet in the other
+   * arrangements.
    */
-  openDetail(open = true) {
-    if (this._destroyed) return this._sheet;
-    const want = open ? "open" : "peek";
-    if (want === this._sheet) return want;
-    this._sheet = want;
+  toggleDetail(force) {
+    const open = force ?? this._sheet !== "open";
+    if (this._destroyed || open === (this._sheet === "open")) return this._sheet === "open";
+    this._sheet = open ? "open" : "peek";
     if (this._wrap.dataset.panel === "sheet") {
       this._fillPanel();
       this._placePanel();
       if (open && this._selected !== null) this._reveal(this._els.get(this._selected));
-      this._emit("arrange", this.arrangement);
     }
-    return want;
+    return open;
   }
-
-  /** How the map is laid out now: the board side by side ("flow"), scrolling sideways ("scroll") or
-   *  stacked ("stack"); the detail at the side, below, as a sheet at the foot of the window, inline
-   *  under the node, or none; and the sheet's state. */
-  get arrangement() {
-    const d = this._wrap.dataset;
-    const board = d.mode === "stack" ? "stack" : this._boardWrap.scrollWidth > this._boardWrap.clientWidth + 1 ? "scroll" : "flow";
-    return { board, panel: d.panel ?? "none", sheet: d.panel === "sheet" ? this._sheet : null };
+  openDetail(open = true) {
+    M.deprecated("openDetail()", "toggleDetail(force), which returns whether it is open");
+    return this.toggleDetail(open) ? "open" : "peek";
   }
 
   /** "Triage: 5 incoming, 2 outgoing" (other nodes, each counted once), and the self-loop if any. */
@@ -3525,7 +3666,8 @@ class Atlas extends EventTarget {
   }
 
   /**
-   * Stops the current edit's motion: "finish" jumps to its end (settle), "cancel" drops it with the
+   * Stops the current edit's motion: "finish" jumps to its end (settle), the reduced-motion cues
+   * included, "cancel" drops it with the
    * ghosts of removed nodes, "interrupt" (a new edit) drops it where it is, since the next move starts
    * from what is on screen, and lets ghosts fade on. The end callback sees it is no longer current.
    */
@@ -3533,6 +3675,7 @@ class Atlas extends EventTarget {
     const running = this._animations;
     this._animations = [];
     for (const a of running) how === "finish" ? a.finish() : a.cancel();
+    if (how === "finish") for (const a of this._board.getAnimations({ subtree: true })) if (a.id === CUE) a.finish();
     if (how !== "interrupt") this._ghosts.replaceChildren();
   }
 
@@ -3547,7 +3690,7 @@ class Atlas extends EventTarget {
     const decor = [...board.querySelectorAll("[data-key]")].map(e => [e, e.getBoundingClientRect()]);
     const r = this._route();
     const css = mode === "reduce" ? getComputedStyle(this._wrap) : null;
-    const tint = css ? `color-mix(in srgb, ${css.getPropertyValue("--focus").trim() || "currentColor"} 22%, ${css.getPropertyValue("--sheet").trim() || "transparent"})` : "";
+    const tint = css ? `color-mix(in srgb, ${css.getPropertyValue("--focus").trim() || "currentColor"} 22%, ${css.getPropertyValue("--surface").trim() || "transparent"})` : "";
 
     const added = [...now.keys()].filter(id => !first.nodes.has(id));
     const removed = [...first.nodes.keys()].filter(id => !now.has(id));
@@ -3565,8 +3708,8 @@ class Atlas extends EventTarget {
       this._draw(r, null);
       const changed = new Set([...moves.map(m => m.id), ...(diff?.nodes.changed ?? [])].filter(id => this._els.has(id)));
       // A tint that fades: an outline would hide the focus ring of a focused node.
-      for (const id of changed) this._els.get(id).animate([{ backgroundColor: tint }, {}], { duration: MOTION.cue, easing: "ease-out" });
-      for (const id of added) this._els.get(id).animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: "ease-out" });
+      for (const id of changed) this._els.get(id).animate([{ backgroundColor: tint }, {}], { id: CUE, duration: MOTION.cue, easing: "ease-out" });
+      for (const id of added) this._els.get(id).animate([{ opacity: 0 }, { opacity: 1 }], { id: CUE, duration: 150, easing: "ease-out" });
       return;
     }
 
@@ -3687,7 +3830,7 @@ class Atlas extends EventTarget {
     const tall = this._sheet === "open" ? Math.min(Math.max(0.42 * innerHeight, 280), innerHeight - 120) + 12 : 0;
     const reserve = sheet ? Math.max(tall, Math.ceil(innerHeight - this._panel.getBoundingClientRect().top)) + 12 : 0;
     b.style.scrollMarginBottom = sheet ? `${reserve}px` : "";
-    b.scrollIntoView({ block: "nearest", inline: "nearest", behavior: this.options.animate && !instant && !reducedMotion() ? "smooth" : "auto" });
+    b.scrollIntoView({ block: "nearest", inline: "nearest", behavior: this._options.animate && !instant && !reducedMotion() ? "smooth" : "auto" });
   }
 
   _ordered() {
@@ -3757,50 +3900,6 @@ class Atlas extends EventTarget {
     }
     return best;
   }
-}
-
-// -----------------------------------------------------------------------------------------------
-// A batch collects edits on a working copy and commits them as one step.
-
-class Batch {
-  constructor(atlas, model) { this.atlas = atlas; this.model = model; this.warnings = []; this.renames = []; }
-  apply(ops) {
-    const r = M.apply(this.model, ops);
-    this.model = r.model;
-    this.warnings = r.warnings;
-    this.renames.push(...renamesOf(ops));
-    return this;
-  }
-  addNode(node, { index, edges = [] } = {}) {
-    this.apply([{ op: "addNode", node }, ...edges.map(e => ({ op: "addEdge", edge: e }))]);
-    // The document order of every lane becomes its drawn order first (constraints and groups can
-    // draw a lane in another order than the document's): a position counted in drawn order then
-    // lands exactly there, and no existing node changes places. Without flow lanes the new node's
-    // layer is saved too, so the rest of the edit keeps it.
-    const L0 = computeLayout(this.model);
-    this.model = withLayers(withOrder(this.model, L0), L0);
-    // Positions are relative to the node's lane, which may be automatic: anchor on a neighbour.
-    const L = computeLayout(this.model);
-    const peers = L.order.get(L.laneOf.get(node.id)).filter(id => id !== node.id);
-    // The best gap, or the allowed gap nearest the given index: never one that moves existing nodes.
-    index = bestInsertion(this.model, node.id, index);
-    if (!peers.length) return this;
-    return this.apply(index < peers.length
-      ? { op: "moveNode", id: node.id, before: peers[index] }
-      : { op: "moveNode", id: node.id, after: peers[peers.length - 1] });
-  }
-  connect(from, to, opts = {}) { return this.apply({ op: "addEdge", edge: clean({ from, to, ...opts }) }); }
-  removeNode(id) { return this.apply({ op: "removeNode", id }); }
-  updateNode(id, changes) { return this.apply({ op: "updateNode", id, changes }); }
-  moveNode(id, opts = {}) { return this.apply({ op: "moveNode", id, ...opts }); }
-  disconnect(id) { return this.apply({ op: "removeEdge", id }); }
-  updateEdge(id, changes) { return this.apply({ op: "updateEdge", id, changes }); }
-  addLane(lane, { index } = {}) { return this.apply({ op: "addLane", lane, index }); }
-  updateLane(id, changes) { return this.apply({ op: "updateLane", id, changes }); }
-  addGroup(group) { return this.apply({ op: "addGroup", group }); }
-  updateGroup(id, changes) { return this.apply({ op: "updateGroup", id, changes }); }
-  addConstraint(constraint) { return this.apply({ op: "addConstraint", constraint }); }
-  setMeta(changes) { return this.apply({ op: "setMeta", changes }); }
 }
 
 // -----------------------------------------------------------------------------------------------
@@ -3907,34 +4006,46 @@ __modules.element = (() => {
 //   <atlas-map><script type="application/json">{ "nodes": [...] }<\/script></atlas-map>
 //   (the slash is escaped so that the built files can be pasted inside an HTML script element)
 //
-// The instance is at element.atlas; events bubble out as atlas-change, atlas-select, atlas-error.
-// element.ready settles when the current board is on screen (or failed) and element.error keeps the
-// last failure, so code that runs after the board loaded still learns how it went. Removing the
+// The instance is at element.atlas; its events bubble out of the element as atlas-change,
+// atlas-select and atlas-mark, and a board that fails to load as atlas-error. element.ready
+// settles when the current board is on screen, or rejects, whenever your code asks. Removing the
 // element keeps its engine (it may only be moving); element.atlas.destroy() frees it.
 
 const { Atlas } = __modules.atlas;
+const { deprecated } = __modules.model;
 
-// Outside a browser (Node, for validate/layout/route) there is no HTMLElement; the class still loads.
+/** The panel attribute: none, side, below or sheet; anything else is auto ("false" is the old none). */
+function panelOf(value) {
+  if (value === "false") { deprecated('panel="false"', 'panel="none"'); return "none"; }
+  return ["none", "side", "below", "sheet"].includes(value) ? value : "auto";
+}
+
+// Outside a browser (Node, for validate() and apply()) there is no HTMLElement; the class still loads.
 const Base = typeof HTMLElement !== "undefined" ? HTMLElement : class {};
 
 class AtlasMap extends Base {
-  static get observedAttributes() { return ["src", "selected"]; }
+  static get observedAttributes() { return ["src", "selected", "panel"]; }
 
   constructor() {
     super();
-    /** The last failure to load ({ errors }), or null once a board is on screen. */
-    this.error = null;
+    this._error = null;
     this._seq = 0;
     this._pending();
   }
 
   /** Settles with the instance when the current board is on screen; rejects with { errors }. */
   get ready() { return this._ready; }
+  /** Deprecated since 0.5.0: `ready` rejects with the same { errors }, and atlas-error carries them. */
+  get error() { deprecated("element.error", "element.ready (it rejects with { errors })"); return this._error; }
 
   connectedCallback() {
     if (this.atlas && !this.atlas.destroyed) return;
-    const panel = this.getAttribute("panel");
-    this.atlas = new Atlas(this, { selected: this.getAttribute("selected") ?? undefined, panel: panel === "false" ? false : ["side", "below", "sheet"].includes(panel) ? panel : "auto" });
+    this.atlas = new Atlas(this, { panel: panelOf(this.getAttribute("panel")) });
+    this._pending();   // a new map after destroy(): ready waits for its board
+    // The engine's events, out of the element for the page.
+    for (const type of ["change", "select", "mark"]) {
+      this.atlas.addEventListener(type, e => this.dispatchEvent(new CustomEvent(`atlas-${type}`, { detail: e.detail, bubbles: true, composed: true })));
+    }
     const start = () => {
       const inline = this.querySelector(':scope > script[type="application/json"]');
       if (inline) this._load(inline.textContent, ++this._seq);
@@ -3950,7 +4061,8 @@ class AtlasMap extends Base {
   attributeChangedCallback(name, old, value) {
     if (!this.atlas || old === value) return;
     if (name === "src" && value) this._fetch(value);
-    if (name === "selected") this.atlas.select(value, { focus: false });
+    if (name === "selected") this.atlas.select(value);
+    if (name === "panel") this.atlas._setPanel(panelOf(value));
   }
 
   async _fetch(src) {
@@ -3980,14 +4092,14 @@ class AtlasMap extends Base {
     } catch (e) {
       return this._fail(e.errors ?? [{ path: "", code: "load", message: String(e.message ?? e) }]);
     }
-    this.error = null;
+    this._error = null;
     this._settle.resolve(this.atlas);
   }
 
   _fail(errors) {
-    this.error = { errors };
-    this._settle.reject(this.error);
-    this.dispatchEvent(new CustomEvent("atlas-error", { detail: this.error, bubbles: true, composed: true }));
+    this._error = { errors };
+    this._settle.reject(this._error);
+    this.dispatchEvent(new CustomEvent("atlas-error", { detail: this._error, bubbles: true, composed: true }));
   }
 
   /** A new promise for the board on its way, unless the current one is still unsettled. */
@@ -4014,15 +4126,14 @@ __modules.index = (() => {
 // Atlas: a dependency-free engine for relational maps.
 const { Atlas } = __modules.atlas;
 const { AtlasMap, define } = __modules.element;
-const { FORMAT, LIMITS, AtlasError, parse, normalize, validate, load, apply, serialize, diff } = __modules.model;
-const { layout, bestInsertion, inversions, withLayers } = __modules.layout;
-const { route, demand, ROUTE } = __modules.route;
+const { FORMAT, LIMITS, AtlasError } = __modules.model;
+const { validate, apply, diff, parse, normalize, load, serialize } = __modules.boards;
 
 const { define: defineElement } = __modules.element;
 if (typeof customElements !== "undefined") defineElement();
 
-return { Atlas, AtlasMap, define, FORMAT, LIMITS, AtlasError, parse, normalize, validate, load, apply, serialize, diff, layout, bestInsertion, inversions, withLayers, route, demand, ROUTE };
+return { Atlas, AtlasMap, define, FORMAT, LIMITS, AtlasError, validate, apply, diff, parse, normalize, load, serialize };
 })();
 
-globalThis.Atlas = Object.assign(__modules.index.Atlas, { ...__modules.index, VERSION: "0.4.0" });
+globalThis.Atlas = Object.assign(__modules.index.Atlas, { ...__modules.index, VERSION: "0.5.0" });
 })();

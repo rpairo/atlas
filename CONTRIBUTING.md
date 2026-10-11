@@ -55,7 +55,7 @@ at each width, selects every node of the board and checks that:
 - when stacked, the lanes form one readable column, nothing overlaps, and the detail sits under
   the selected node;
 - a refused edit leaves the map usable, warnings follow undo, every arrow key moves the focus the
-  way of the arrow, and `reorderAll()` counts what it changes;
+  way of the arrow, and `reorder()` counts what it changes;
 - a node selected or reached by keyboard ends up on screen and clear of the detail sheet;
 - groups keep one column per lane and their legends sit on nothing;
 - edits read the layout before animating, a move cut by another edit continues from where the nodes

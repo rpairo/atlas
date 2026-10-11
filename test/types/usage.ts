@@ -4,13 +4,12 @@
 //   npx --yes -p typescript@7.0.2 tsc -p test/types
 
 import {
-  Atlas, AtlasMap, AtlasError, define, FORMAT, LIMITS, VERSION,
-  parse, normalize, validate, load, apply, serialize, diff,
-  layout, bestInsertion, inversions, route, demand, ROUTE,
+  Atlas, AtlasMap, AtlasError, define, FORMAT, LIMITS, VERSION, validate, apply, diff,
+  parse, normalize, load, serialize,
 } from "@rpairo/atlas";
 import type {
   Board, Model, Node, Edge, Constraint, Operation, OperationName, Finding, Diff, SavedBoard,
-  ChangeDetail, ErrorDetail, Suggestion, Batch, Layout, RouteResult,
+  ChangeDetail, ErrorDetail, MarkDetail, Suggestion, Batch, PanelPlace,
 } from "@rpairo/atlas";
 
 const board: Board = {
@@ -35,36 +34,40 @@ const dangling: Edge = { from: "a" };
 // @ts-expect-error: `first` takes `node`, not `a`
 const badConstraint: Constraint = { type: "first", a: "x" };
 
-// The model functions.
+// The pure functions: a board in, a board out.
 const fmt: "atlas/1" = FORMAT;
 const maxNodes: number = LIMITS.nodes;
 // @ts-expect-error: LIMITS is read-only
 LIMITS.nodes = 1;
 const version: string = VERSION;
-const raw: unknown = parse('{"nodes":[]}');
-const model: Model = normalize(board);
-const fromText: Model = normalize('{"nodes":[]}');
-const check = validate(model);
+const check = validate(board);
 const okFlag: boolean = check.ok;
-const firstError: Finding | undefined = check.errors[0];
-const loaded = load(board);
-const edgeId: string = loaded.model.edges[0].id;
-const direction: "right" | "down" | "left" | "up" = loaded.model.meta.direction;
-const extra: Record<string, unknown> = loaded.model.extra;
-const next = apply(loaded.model, [
+const firstError: Finding | undefined = validate("{").errors[0];
+const next: SavedBoard = apply(board, [
   { op: "addNode", node: { id: "x", lane: "inputs" }, after: "paid" },
   { op: "setMeta", changes: { title: null, direction: "left" } },
 ]);
-const saved: SavedBoard = serialize(next.model);
-const savedEdgeId: string = saved.edges[0].id;
-const changes: Diff = diff(loaded.model, next.model);
+const fromText: SavedBoard = apply('{"nodes":[]}', { op: "addNode", node: { id: "a" } });
+const savedEdgeId: string = next.edges[0].id;
+const savedDirection: "right" | "down" | "left" | "up" = next.meta.direction;
+const changes: Diff = diff(board, next);
 const added: string[] = changes.nodes.added;
 const reordered: boolean = changes.order;
+// @ts-expect-error: apply returns the board, not { model, warnings }
+const notModel: Model = apply(board, []).model;
+
+// Deprecated in 0.5.0, still typed until 0.6.0.
+const raw: unknown = parse('{"nodes":[]}');
+const model: Model = normalize(board);
+const loaded = load(board);
+const extra: Record<string, unknown> = loaded.model.extra;
+const resaved: SavedBoard = serialize(model);
+const checkModel = validate(model);
 // @ts-expect-error: a model is not a board (normalize would nest its `extra`)
 normalize(loaded.model);
 
 try {
-  load("{");
+  apply(board, { op: "removeNode", id: "nope" });
 } catch (e) {
   if (e instanceof AtlasError) {
     const codes: string[] = e.errors.map(f => f.code);
@@ -106,9 +109,7 @@ const missingId: Operation = { op: "moveNode", lane: "inputs" };
 // The live map.
 const host = document.createElement("div");
 const map = new Atlas(host, {
-  document: board,
-  selected: "paid",
-  panel: false,
+  panel: "none",
   labels: { incoming: "Entradas" },
   renderNode(node: Node, button: HTMLButtonElement, live) {
     button.textContent = live.subtitle ?? node.title ?? node.id;
@@ -116,79 +117,97 @@ const map = new Atlas(host, {
   },
   animate: false,
   shadow: true,
-});
-// @ts-expect-error: panel is "auto" or false
+  headingLevel: 3,
+}).load(board, { selected: "paid", reorder: false });
+const places: PanelPlace[] = ["auto", "side", "below", "sheet", "none"];
+// @ts-expect-error: panel is a place
 new Atlas(host, { panel: true });
 // @ts-expect-error: the host is an element
 new Atlas("map");
+// Deprecated spellings still type-check.
+new Atlas(host, { document: board, selected: "paid", panel: false });
 
 const root: ShadowRoot | HTMLElement = map.root;
 const label: string = map.labels.selfLoop;
-const animate: boolean = map.options.animate;
+// @ts-expect-error: the labels in use are read-only
+map.labels.selfLoop = "x";
+// @ts-expect-error: the options are not part of the map
+map.options;
 const json: SavedBoard = map.toJSON();
-const same: SavedBoard = map.export();
 const rev: number = map.rev;
 const selected: string | null = map.selected;
 const warnings: Finding[] = map.warnings;
 const node: Node | null = map.node("paid");
 const wireIds: string[] = map.edges("paid").map(e => e.id);
 const found: string[] = map.find("pai");
-const advice: Suggestion[] = map.suggestions();
-for (const s of advice) if (s.code === "lane") console.log(s.node);
-const chained: Atlas = map.load(board, { optimize: false, selected: null }).load('{"nodes":[]}');
+const chained: Atlas = map.load('{"nodes":[]}');
 
-const revs: number[] = [
-  map.apply({ op: "removeEdge", id: "paid->packed" }),
-  map.apply([{ op: "addEdge", edge: { from: "paid", to: "packed" } }]),
-  map.batch((b: Batch) => {
-    b.addNode({ id: "y", lane: "outputs" }, { index: 0, edges: [{ from: "paid", to: "y" }] })
-      .connect("y", "packed", { label: "then", weight: 2 })
+// Every edit returns the map, so edits chain.
+map
+  .apply({ op: "removeEdge", id: "paid->packed" })
+  .apply([{ op: "addEdge", edge: { from: "paid", to: "packed" } }])
+  .batch(m => {
+    m.addNode({ id: "y", lane: "outputs" }, { index: 0, edges: [{ from: "paid", to: "y" }] })
+      .addEdge({ from: "y", to: "packed", label: "then", weight: 2 })
       .updateNode("y", { subtitle: null })
       .moveNode("y", { before: "packed" })
-      .disconnect("y->packed")
+      .removeEdge("y->packed")
       .removeNode("y")
       .apply({ op: "setMeta", changes: { ordered: true } });
-  }),
-  map.addNode({ id: "z", title: "Z", lane: "inputs" }, { edges: [{ from: "z", to: "packed" }] }),
-  map.updateNode("z", { title: "Zed", details: null }),
-  map.moveNode("z", { lane: null, index: 1 }),
-  map.renameNode("z", "zed"),
-  map.connect("zed", "paid", { id: "e2", label: "back", details: "why", type: "flow" }),
-  map.updateEdge("e2", { label: null }),
-  map.disconnect("e2"),
-  map.disconnect({ from: "paid", to: "packed" }),
-  map.addLane({ id: "late", kind: "after" }, { index: 0 }),
-  map.updateLane("late", { title: "Late" }),
-  map.moveLane("late", 2),
-  map.moveLane("late"),
-  map.removeLane("late", { moveTo: "inputs" }),
-  map.addGroup({ id: "ops", parent: "billing" }),
-  map.removeGroup("ops"),
-  map.addConstraint({ type: "last", node: "packed" }),
-  map.removeConstraint(0),
-  map.pin("paid", { lane: "inputs", index: 0 }),
-  map.unpin("paid"),
-  map.setMeta({ direction: "up", title: "New" }),
-  map.removeNode("zed"),
-];
-const { swaps }: { swaps: number } = map.reorderAll({ dryRun: true });
+    const inside: Node | null = m.node("paid");
+  })
+  .addNode({ id: "z", title: "Z", lane: "inputs" }, { edges: [{ from: "z", to: "packed" }] })
+  .updateNode("z", { title: "Zed", details: null })
+  .moveNode("z", { lane: null, index: 1 })
+  .renameNode("z", "zed")
+  .addEdge({ id: "e2", from: "zed", to: "paid", label: "back", details: "why", type: "flow" })
+  .updateEdge("e2", { label: null })
+  .removeEdge("e2")
+  .addLane({ id: "late", kind: "after" }, { index: 0 })
+  .updateLane("late", { title: "Late" })
+  .moveLane("late", { index: 2 })
+  .moveLane("late")
+  .removeLane("late", { moveTo: "inputs" })
+  .addGroup({ id: "ops", parent: "billing" })
+  .updateGroup("ops", { title: "Ops" })
+  .removeGroup("ops")
+  .addConstraint({ type: "last", node: "packed" })
+  .removeConstraint(0)
+  .updateNode("paid", { pinned: true })
+  .setMeta({ direction: "up", title: "New" })
+  .removeNode("zed")
+  .clearHistory()
+  .setState("paid", { subtitle: 21.5, status: "on" })
+  .setState("paid", { subtitle: null, status: null })
+  .select("paid", { focus: true, animate: true, reveal: false, announce: true })
+  .select(null)
+  .mark(map.find("pai"))
+  .mark(null)
+  .settle();
+const swapped: number = map.reorder({ dryRun: true });
 const undone: boolean = map.undo();
 const redone: boolean = map.redo();
 const canUndo: boolean = map.canUndo && map.canRedo;
-map.setState("paid", { subtitle: 21.5, status: "on" });
-map.setState("paid", { subtitle: null, status: null });
-map.select("paid", { focus: false, animate: true });
-map.select(null);
-map.settle();
-map.destroy();
-// @ts-expect-error: edits return the revision, not a boolean
-const notBoolean: boolean = map.updateNode("paid", {});
+const current: string | null = map.nextMark(-1, { focus: true });
+const open: boolean = map.toggleDetail(true);
+// @ts-expect-error: edits return the map, not a revision
+const notRev: number = map.updateNode("paid", {});
 // @ts-expect-error: rev is read-only
 map.rev = 3;
-// @ts-expect-error: connect takes the ends separately
-map.connect({ from: "a", to: "b" });
+// @ts-expect-error: addEdge takes one edge
+map.addEdge("a", "b");
 
-// Events, with typed detail.
+// Deprecated in 0.5.0, still typed until 0.6.0.
+const same: SavedBoard = map.export();
+const advice: Suggestion[] = map.suggestions();
+for (const s of advice) if (s.code === "lane") console.log(s.node);
+map.connect("paid", "packed", { label: "x" }).disconnect({ from: "paid", to: "packed" }).pin("paid", { index: 0 }).unpin("paid").moveLane("inputs", 1);
+const { swaps, layers }: { swaps: number; layers: number } = map.reorderAll({ dryRun: true });
+const sheet: "open" | "peek" = map.openDetail(false);
+map.batch((b: Batch) => b.addLane({ id: "extra" }));
+map.load(board, { optimize: false });
+
+// Events, with typed detail, from the instance.
 map.addEventListener("change", e => {
   const detail: ChangeDetail = e.detail;
   const r: number = e.detail.rev;
@@ -198,12 +217,18 @@ map.addEventListener("change", e => {
 map.addEventListener("select", e => {
   const id: string | null = e.detail.id;
 });
+map.addEventListener("mark", e => {
+  const detail: MarkDetail = e.detail;
+  const ids: string[] = e.detail.ids;
+});
 map.addEventListener("other", (e: Event) => e.type);
 const onSelect = (e: CustomEvent<{ id: string | null }>) => void e.detail.id;
 map.addEventListener("select", onSelect);
 map.removeEventListener("select", onSelect);
 // @ts-expect-error: a select event carries an id, not a rev
 map.addEventListener("select", e => e.detail.rev);
+map.destroy();
+const gone: boolean = map.destroyed;
 
 // The element.
 define();
@@ -214,29 +239,9 @@ document.querySelector("atlas-map")!.atlas?.select("paid");
 const created: AtlasMap = document.createElement("atlas-map");
 element.addEventListener("atlas-change", e => { const r: number = e.detail.rev; });
 element.addEventListener("atlas-select", e => { const id: string | null = e.detail.id; });
+element.addEventListener("atlas-mark", e => { const ids: string[] = e.detail.ids; });
 element.addEventListener("atlas-error", e => { const errors: Finding[] = e.detail.errors; });
-host.addEventListener("atlas-change", e => e.detail.diff?.nodes.changed);
 const attributes: string[] = AtlasMap.observedAttributes;
 const whenReady: Promise<Atlas> = element.ready;
 const failure: ErrorDetail | null = element.error;
-const gone: boolean = map.destroyed;
-map.updateGroup("billing", { title: "Billing" });
-map.clearHistory();
-map.batch(b => b.addLane({ id: "extra", title: "Extra" }).setMeta({ title: "Shop" }).addConstraint({ type: "first", node: "paid" }));
 const limited = new Atlas(document.createElement("div"), { historyLimit: 10, labels: { board: "Mapa", detail: "Detalle" } });
-
-// The experimental internals.
-const placement: Layout = layout(loaded.model, { optimize: true });
-const lanesInOrder: string[] = placement.flow.map(l => l.id);
-const order: string[] | undefined = placement.order.get("inputs");
-const gap: number = bestInsertion(loaded.model, "paid");
-const moved: number = inversions(placement, layout(loaded.model));
-const need = demand(["a", "b"], [{ id: "a->b", from: "a", to: "b" }], () => ({ kind: "col", col: 0 }), () => ({ u: 0, v: 0.5 }), { ct: 0, cb: 1 });
-const tracks: number | undefined = need.tracks.get("g1");
-const routed: RouteResult = route("a", [{ id: "a->b", from: "a", to: "b" }], {
-  boxes: new Map([["a", { l: 0, r: 10, t: 0, b: 10 }], ["b", { l: 40, r: 50, t: 0, b: 10 }]]),
-  corridors: { g0: { a: -20, b: 0 }, g1: { a: 10, b: 40 }, g2: { a: 50, b: 70 }, ct: { a: -20, b: 0 }, cb: { a: 10, b: 30 } },
-  place: id => ({ kind: "col", col: id === "a" ? 0 : 1 }),
-});
-const firstPoint: number | undefined = routed.wires[0]?.points[0]?.u;
-const radius: number = ROUTE.radius;

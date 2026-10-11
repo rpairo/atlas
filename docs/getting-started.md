@@ -20,16 +20,16 @@ Pick a source:
 <script type="module" src="./atlas.js"></script>
 
 <!-- From a CDN, pinned to an exact version -->
-<script type="module" src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.4.0/dist/atlas.js"></script>
+<script type="module" src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.5.0/dist/atlas.js"></script>
 
 <!-- Classic script, no modules -->
-<script src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.4.0/dist/atlas.global.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.5.0/dist/atlas.global.js"></script>
 ```
 
 With npm (from GitHub; Atlas is not on the npm registry):
 
 ```bash
-npm install github:rpairo/atlas#v0.4.0
+npm install github:rpairo/atlas#v0.5.0
 ```
 
 ```js
@@ -43,13 +43,13 @@ ES modules do not load from `file://` URLs. Serve the page over HTTP, for exampl
 
 ### Pin a version
 
-Always load an exact version (`@v0.4.0`, `#v0.4.0`), never a branch. The notes of every
+Always load an exact version (`@v0.5.0`, `#v0.5.0`), never a branch. The notes of every
 [release](https://github.com/rpairo/atlas/releases) list the SHA-384 integrity of each file, so a
 CDN copy can be checked by the browser:
 
 ```html
 <script type="module"
-  src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.4.0/dist/atlas.js"
+  src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.5.0/dist/atlas.js"
   integrity="sha384-…from the release notes…"
   crossorigin="anonymous"></script>
 ```
@@ -112,17 +112,16 @@ document.querySelector("atlas-map").addEventListener("atlas-error", e => console
 ```
 
 The events fire once your code had the chance to listen. If it may run later, ask the element:
-`el.ready` settles when the board is on screen (or rejects with the same `{ errors }`), and
-`el.error` keeps the last failure.
+`el.ready` settles when the board is on screen, or rejects with the same `{ errors }`.
 
 ## Edit it from JavaScript
 
-The element's engine is `element.atlas`. You can also create the engine yourself on any element:
+The element's map is `element.atlas`. You can also create the map yourself on any element:
 
 ```js
 import { Atlas } from "./atlas.js";
 
-const map = new Atlas(document.getElementById("map"), { document: board });
+const map = new Atlas(document.getElementById("map")).load(board);
 
 map.addNode({ id: "sms", title: "Welcome SMS", lane: "out" }, {
   edges: [{ from: "check", to: "sms", label: "sends" }],
@@ -130,10 +129,9 @@ map.addNode({ id: "sms", title: "Welcome SMS", lane: "out" }, {
 map.updateNode("sms", { subtitle: "only with consent" });
 map.renameNode("sms", "text");        // every reference follows; nothing moves
 map.undo();                           // exact: the document is restored as it was
-map.batch(m => {                      // several edits, one undo step
-  m.removeNode("crm");
-  m.connect("check", "mail", { label: "also sends" });
-});
+map.batch(m => m                      // several edits, one undo step
+  .removeNode("crm")
+  .addEdge({ from: "check", to: "mail", label: "also sends" }));
 ```
 
 Every edit validates the whole board first. An edit that would break it throws an `AtlasError`
@@ -152,7 +150,7 @@ map.addEventListener("change", () => {
 
 A board Atlas has never seen is tidied once, to the order with the fewest crossings, and saved
 with `"meta": { "ordered": true }`. After that Atlas keeps the order you see and only changes it
-when you ask (`map.reorderAll()`).
+when you ask (`map.reorder()`).
 
 ## Show live values
 
@@ -168,21 +166,17 @@ map.setState("check", { subtitle: "3 errors in the last hour", status: "warn" })
 
 ## Use it without a browser
 
-Validation, placement and routing are pure functions. They run in Node, for instance to check
-boards in a CI job:
+`validate()`, `apply()` and `diff()` take boards and need no DOM. They run in Node, for instance to
+check boards in a CI job:
 
 ```js
 import { readFileSync } from "node:fs";
-import { load, AtlasError } from "@rpairo/atlas";
+import { validate } from "@rpairo/atlas";
 
-try {
-  const { warnings } = load(readFileSync("board.json", "utf8"));
-  for (const w of warnings) console.warn(`${w.path}: ${w.message}`);
-} catch (e) {
-  if (!(e instanceof AtlasError)) throw e;
-  for (const err of e.errors) console.error(`${err.path} [${err.code}]: ${err.message}`);
-  process.exitCode = 1;
-}
+const { ok, errors, warnings } = validate(readFileSync("board.json", "utf8"));
+for (const w of warnings) console.warn(`${w.path}: ${w.message}`);
+for (const e of errors) console.error(`${e.path} [${e.code}]: ${e.message}`);
+if (!ok) process.exitCode = 1;
 ```
 
 Editors that understand JSON Schema can validate boards as you type with

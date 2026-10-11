@@ -106,8 +106,8 @@
       if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
       const board = await response.json();
       if (choices.direction.value) board.meta = { ...board.meta, direction: choices.direction.value };
-      if (map) map.load(board);
-      else map = new Atlas(host, { document: board });
+      map ??= new Atlas(host);
+      map.load(board);
     } catch (e) {
       $("error").textContent = `Could not load the example: ${e.message}`;
     }

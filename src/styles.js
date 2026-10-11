@@ -8,7 +8,7 @@
 // they only shadow what is inside, and the same rules work without a shadow root.
 
 // The dark defaults, for the system's dark mode and for theme="dark".
-const DARK = `--paper: var(--atlas-paper, #0c141e); --sheet: var(--atlas-sheet, #132030); --ink: var(--atlas-ink, #e3eaf2);
+const DARK = `--paper: var(--atlas-paper, #0c141e); --surface: var(--atlas-surface, var(--atlas-sheet, #132030)); --ink: var(--atlas-ink, #e3eaf2);
   --ink-2: var(--atlas-ink-2, #98a9bd); --rule: var(--atlas-rule, #2a3a4e); --grid: var(--atlas-grid, #152232);
   --out: var(--atlas-out, #e88d52); --in: var(--atlas-in, #6ea8ec); --shadow: var(--atlas-shadow, rgba(0, 0, 0, .55));
   --mark: var(--atlas-mark, #3a3112); --mark-dot: var(--atlas-mark-dot, #e0b43a);`;
@@ -20,7 +20,7 @@ export const STYLES = `
 }
 .atlas {
   --paper: var(--atlas-paper, #f1f4f7);
-  --sheet: var(--atlas-sheet, #ffffff);
+  --surface: var(--atlas-surface, var(--atlas-sheet, #ffffff));   /* nodes and panel (--atlas-sheet: before 0.5.0) */
   --ink: var(--atlas-ink, #132033);
   --ink-2: var(--atlas-ink-2, #55657c);
   --rule: var(--atlas-rule, #cdd6e1);
@@ -105,7 +105,7 @@ ol.nodes > li > .panel { margin-top: 10px; }
 /* Nodes */
 .node {
   position: relative; display: block; width: 100%; min-width: 0; text-align: start;
-  background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: 4px;
   padding: 9px 12px 10px; cursor: pointer;
 }
 .node .t { display: block; font-weight: 600; font-size: 14px; line-height: 1.3; overflow-wrap: anywhere; }
@@ -136,7 +136,7 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .wire.out { stroke: var(--out); } .wire.in { stroke: var(--in); }
 .wire.backward { stroke-dasharray: 6 4; }
 .arrow.out, .dot.out { fill: var(--out); } .arrow.in, .dot.in { fill: var(--in); }
-.dot { stroke: var(--sheet); stroke-width: 1.5; }
+.dot { stroke: var(--surface); stroke-width: 1.5; }
 @media (prefers-reduced-motion: no-preference) {
   .wire.draw, .casing.draw {
     stroke-dasharray: var(--len) var(--len); stroke-dashoffset: var(--len);
@@ -152,7 +152,7 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 
 /* Panel */
 .panel {
-  background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius);
   padding: 18px 18px 20px; display: grid; gap: 12px; min-width: 0;
   grid-template-columns: minmax(0, 1fr);   /* never as wide as a long unbroken title */
 }
@@ -171,7 +171,7 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
   display: flex; flex-wrap: nowrap; align-items: baseline; gap: 4px 12px; width: 100%; min-height: 48px; padding: 13px 18px;
   border: 0; border-radius: var(--radius) var(--radius) 0 0; background: none; text-align: start; cursor: pointer;
 }
-.p-toggle:hover { background: color-mix(in srgb, var(--paper) 55%, var(--sheet)); }
+.p-toggle:hover { background: color-mix(in srgb, var(--paper) 55%, var(--surface)); }
 .p-toggle:focus-visible { outline-offset: -2px; }
 .p-toggle .p-lane { flex: none; }
 .p-toggle .p-name { flex: 0 1 auto; min-width: 0; font-size: 1.05rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

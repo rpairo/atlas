@@ -7,6 +7,85 @@ public API is.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-11
+
+One API instead of two: an API review and a simplification review, each checked against the
+browser audit in Chrome, Edge, Firefox and WebKit and the v0.3.2 fingerprints (unchanged on 66
+boards). The breaks are taken while Atlas is 0.x; everything renamed still works until 0.6.0, with a
+warning.
+
+### Changed
+
+- **Breaking.** Every edit returns the map, so edits chain
+  (`map.addNode(n).addEdge(e).select(n.id)`); they returned the revision, which `map.rev` gives.
+  `mark()`, `select()`, `setState()`, `settle()` and `clearHistory()` return the map too.
+- **Breaking.** `batch(fn)` hands `fn` the map itself, with every method; it was a separate object
+  with a subset of them. `node()`, `edges()`, `find()` and `toJSON()` read the batch's edits;
+  `select()`, `mark()` and `setState()` run when it ends, so `m.addNode(n).select(n.id)` works. A
+  batch inside a batch that fails undoes its own part. `load()`, `undo()`, `redo()` and `reorder()`
+  throw inside a batch.
+- **Breaking.** The pure functions take boards: `validate(board)` never throws (not JSON, a wrong
+  shape and a bad board are findings) and includes placement warnings; `apply(board, ops)` returns
+  the edited board, canonical and with saved layers. `apply()` took a model and returned
+  `{ model, warnings }`.
+- **Breaking.** Events fire on the map only. `<atlas-map>` sends them on as `atlas-change`,
+  `atlas-select` and `atlas-mark`; a plain host element no longer receives `atlas-*` events.
+- **Breaking.** `select()` no longer moves keyboard focus unless `{ focus: true }` (a page's
+  `select()` stole focus from its own search box), still scrolls the node into view (`reveal`), and
+  an unknown id changes nothing (it cleared the selection).
+- **Breaking.** `setState()` throws an `AtlasError` for a status that cannot be a CSS part name (it
+  dropped it silently).
+- `labels` is read-only; the `panel` attribute of `<atlas-map>` is live.
+- The `mark` event also fires when an edit or `load()` renames, removes or clears marked nodes.
+- Lanes are saved with their `id` first (`kind` was written before it).
+- Nodes in flows that go down or up are sized from the ports on the sides that face the corridors.
+- An edit moves in one stage: the along-then-across split doubled the longest moves to 1.4 s and
+  turned wire reshaping off.
+
+### Added
+
+- `addEdge(edge)` and `removeEdge(id)`, like every other kind of object; `addNode()` and
+  `moveNode()` take `before` and `after`; `moveLane(id, { index })`; `reorder()`, which returns one count; `toggleDetail(force)`,
+  which returns whether the sheet is open; `load(board, { reorder })`; `panel: "none"`.
+- `--atlas-surface`, the colour of nodes and panel (`--atlas-sheet` read like the detail sheet's,
+  next to `--atlas-sheet-height`).
+
+### Deprecated
+
+These work until 0.6.0 and print one `console.warn` the first time
+([the list with replacements](docs/api.md#deprecated)):
+
+- The `document` and `selected` options: `new Atlas(el).load(board, { selected })`.
+- `panel: false` and `panel="false"`: `"none"`. `load(board, { optimize })`: `reorder`.
+- `connect()` and `disconnect()`: `addEdge()` and `removeEdge()`. `moveLane(id, index)`.
+- `pin()` and `unpin()`: `updateNode(id, { pinned })`. `reorderAll()`: `reorder()`.
+- `openDetail()`: `toggleDetail()`. `export()`: `toJSON()`. `suggestions()`: `validate()` and
+  `map.warnings`. `el.error`: `el.ready`.
+- `parse()`, `normalize()`, `load()` and `serialize()`: the canonical model leaves the package;
+  `validate()` and `apply()` take boards.
+- `--atlas-sheet`: `--atlas-surface`.
+
+### Removed
+
+- The experimental exports `layout`, `bestInsertion`, `inversions`, `withLayers`, `route`, `demand`
+  and `ROUTE` (`apply()` now saves layers itself), and the experimental `arrangement` getter and
+  `arrange` event.
+- The `options` property and the `Batch` type (an alias of `Atlas` in the declarations until 0.6.0).
+
+### Fixed
+
+- `settle()` did not end the reduced-motion cues (a tint that fades), so a screenshot right after
+  an edit could show them.
+- An `<atlas-map>` with an inline board, destroyed and inserted again, kept `ready` resolved to the
+  destroyed map.
+
+### Development
+
+- The renderer and the test geometry share one corridor sizing; one group walker, one neighbour
+  function and one move stage replace copies; dead code, a model re-export and unused exports are
+  gone. The browser audit checks the new API (batch, events, select, statuses, the deprecated names)
+  and, under reduced motion, every animation on the board.
+
 ## [0.4.0] - 2026-10-11
 
 Five specialist reviews (graph drawing, motion, visual design, interaction and accessibility, QA)
@@ -292,7 +371,8 @@ Not published. Fixes found by embedding Atlas in a host page.
 Not published. First version: the `atlas/1` format with validation and edit operations, placement,
 orthogonal routing, the `Atlas` class and the `<atlas-map>` element, single-file builds and tests.
 
-[Unreleased]: https://github.com/rpairo/atlas/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/rpairo/atlas/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/rpairo/atlas/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/rpairo/atlas/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/rpairo/atlas/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/rpairo/atlas/compare/v0.3.0...v0.3.1

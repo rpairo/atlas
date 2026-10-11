@@ -4,34 +4,46 @@
 //   <atlas-map><script type="application/json">{ "nodes": [...] }<\/script></atlas-map>
 //   (the slash is escaped so that the built files can be pasted inside an HTML script element)
 //
-// The instance is at element.atlas; events bubble out as atlas-change, atlas-select, atlas-error.
-// element.ready settles when the current board is on screen (or failed) and element.error keeps the
-// last failure, so code that runs after the board loaded still learns how it went. Removing the
+// The instance is at element.atlas; its events bubble out of the element as atlas-change,
+// atlas-select and atlas-mark, and a board that fails to load as atlas-error. element.ready
+// settles when the current board is on screen, or rejects, whenever your code asks. Removing the
 // element keeps its engine (it may only be moving); element.atlas.destroy() frees it.
 
 import { Atlas } from "./atlas.js";
+import { deprecated } from "./model.js";
 
-// Outside a browser (Node, for validate/layout/route) there is no HTMLElement; the class still loads.
+/** The panel attribute: none, side, below or sheet; anything else is auto ("false" is the old none). */
+function panelOf(value) {
+  if (value === "false") { deprecated('panel="false"', 'panel="none"'); return "none"; }
+  return ["none", "side", "below", "sheet"].includes(value) ? value : "auto";
+}
+
+// Outside a browser (Node, for validate() and apply()) there is no HTMLElement; the class still loads.
 const Base = typeof HTMLElement !== "undefined" ? HTMLElement : class {};
 
 export class AtlasMap extends Base {
-  static get observedAttributes() { return ["src", "selected"]; }
+  static get observedAttributes() { return ["src", "selected", "panel"]; }
 
   constructor() {
     super();
-    /** The last failure to load ({ errors }), or null once a board is on screen. */
-    this.error = null;
+    this._error = null;
     this._seq = 0;
     this._pending();
   }
 
   /** Settles with the instance when the current board is on screen; rejects with { errors }. */
   get ready() { return this._ready; }
+  /** Deprecated since 0.5.0: `ready` rejects with the same { errors }, and atlas-error carries them. */
+  get error() { deprecated("element.error", "element.ready (it rejects with { errors })"); return this._error; }
 
   connectedCallback() {
     if (this.atlas && !this.atlas.destroyed) return;
-    const panel = this.getAttribute("panel");
-    this.atlas = new Atlas(this, { selected: this.getAttribute("selected") ?? undefined, panel: panel === "false" ? false : ["side", "below", "sheet"].includes(panel) ? panel : "auto" });
+    this.atlas = new Atlas(this, { panel: panelOf(this.getAttribute("panel")) });
+    this._pending();   // a new map after destroy(): ready waits for its board
+    // The engine's events, out of the element for the page.
+    for (const type of ["change", "select", "mark"]) {
+      this.atlas.addEventListener(type, e => this.dispatchEvent(new CustomEvent(`atlas-${type}`, { detail: e.detail, bubbles: true, composed: true })));
+    }
     const start = () => {
       const inline = this.querySelector(':scope > script[type="application/json"]');
       if (inline) this._load(inline.textContent, ++this._seq);
@@ -47,7 +59,8 @@ export class AtlasMap extends Base {
   attributeChangedCallback(name, old, value) {
     if (!this.atlas || old === value) return;
     if (name === "src" && value) this._fetch(value);
-    if (name === "selected") this.atlas.select(value, { focus: false });
+    if (name === "selected") this.atlas.select(value);
+    if (name === "panel") this.atlas._setPanel(panelOf(value));
   }
 
   async _fetch(src) {
@@ -77,14 +90,14 @@ export class AtlasMap extends Base {
     } catch (e) {
       return this._fail(e.errors ?? [{ path: "", code: "load", message: String(e.message ?? e) }]);
     }
-    this.error = null;
+    this._error = null;
     this._settle.resolve(this.atlas);
   }
 
   _fail(errors) {
-    this.error = { errors };
-    this._settle.reject(this.error);
-    this.dispatchEvent(new CustomEvent("atlas-error", { detail: this.error, bubbles: true, composed: true }));
+    this._error = { errors };
+    this._settle.reject(this._error);
+    this.dispatchEvent(new CustomEvent("atlas-error", { detail: this._error, bubbles: true, composed: true }));
   }
 
   /** A new promise for the board on its way, unless the current one is still unsettled. */

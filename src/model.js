@@ -19,9 +19,9 @@ export const LIMITS = Object.freeze({
   groupDepth: 6,
 });
 
-export const DIRECTIONS = Object.freeze(["right", "down", "left", "up"]);
-export const LANE_KINDS = Object.freeze(["flow", "before", "after"]);
-export const CONSTRAINT_TYPES = Object.freeze(["before", "first", "last"]);
+const DIRECTIONS = Object.freeze(["right", "down", "left", "up"]);
+const LANE_KINDS = Object.freeze(["flow", "before", "after"]);
+const CONSTRAINT_TYPES = Object.freeze(["before", "first", "last"]);
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 // Edge ids may be derived ("from->to#n"), so they also allow ">" and "#".
@@ -81,7 +81,7 @@ export function normalize(input) {
   // A field set to null is a field left out (as in the edit operations), so a board that writes
   // "lane": null loads, and is saved without it, as the schema wants.
   const meta = { direction: "right", ...compact(isObject(doc.meta) ? doc.meta : {}) };
-  const lanes = asArray(doc.lanes).map(l => ({ kind: "flow", ...compact(l) }));
+  const lanes = asArray(doc.lanes).map(l => ({ ...compact(l), kind: l?.kind ?? "flow" }));
   const groups = asArray(doc.groups).map(g => compact(g));
   const nodes = asArray(doc.nodes).map(n => compact(n));
   const constraints = asArray(doc.constraints).map(c => compact(c));
@@ -323,7 +323,7 @@ export { UNASSIGNED };
 // Edit operations. Each one is plain data, so a sequence can be stored, sent and replayed. They
 // are applied to a copy; the caller keeps the previous model for undo, which makes undo exact.
 
-export const OPS = Object.freeze([
+const OPS = Object.freeze([
   "addNode", "updateNode", "moveNode", "removeNode", "renameNode",
   "addEdge", "updateEdge", "removeEdge",
   "addLane", "updateLane", "moveLane", "removeLane",
@@ -430,14 +430,12 @@ const APPLY = {
   },
   addLane(m, { lane, index }, p) {
     need(lane && lane.id, p, "lane with an id is required");
-    insertAt(m.lanes, { kind: "flow", ...compact(lane) }, clampIndex(index, m.lanes.length));
+    insertAt(m.lanes, { ...compact(lane), kind: lane?.kind ?? "flow" }, clampIndex(index, m.lanes.length));
   },
   updateLane(m, { id, changes }, p) {
     const i = indexOf(m.lanes, id, p);
     assign(m.lanes[i], changes);
-    // A kind left out falls back to "flow", placed first as normalize() places it: saving twice gives
-    // the same text.
-    if (m.lanes[i].kind == null) m.lanes[i] = { kind: "flow", ...m.lanes[i] };
+    m.lanes[i].kind ??= "flow";   // a kind left out falls back to "flow", as in normalize()
   },
   moveLane(m, { id, index }, p) {
     const [l] = m.lanes.splice(indexOf(m.lanes, id, p), 1);
@@ -619,8 +617,6 @@ function compact(o) {
   return Object.fromEntries(Object.entries(isObject(o) ? o : {}).filter(([k, v]) => v !== undefined && v !== null && !FORBIDDEN_KEYS.has(k)));
 }
 
-/** Merges changes; a value of undefined or null removes the field. */
-/** Merges `changes` into `target`: null or undefined removes a field; the id never changes here. */
 /** The derived id of an edge: `first` (by default `from->to`) or, while taken, `from->to#1`, `#2`… */
 function edgeId(e, used, first = `${e.from}->${e.to}`) {
   let n = 0, id = first;
@@ -628,6 +624,7 @@ function edgeId(e, used, first = `${e.from}->${e.to}`) {
   return id;
 }
 
+/** Merges `changes` into `target`: null or undefined removes a field; the id never changes here. */
 function assign(target, changes) {
   for (const [k, v] of Object.entries(changes ?? {})) {
     if (k === "id" || FORBIDDEN_KEYS.has(k)) continue;
@@ -646,6 +643,14 @@ function isObject(v) {
 
 function byteLength(s) {
   return new TextEncoder().encode(s).length;
+}
+
+const warned = new Set();
+/** Says once per page that `what` is deprecated (since 0.5.0, gone in 0.6.0) and what to use instead. */
+export function deprecated(what, instead) {
+  if (warned.has(what)) return;
+  warned.add(what);
+  console.warn(`Atlas: ${what} is deprecated since 0.5.0 and will be removed in 0.6.0; use ${instead}.`);
 }
 
 export function clone(v) {

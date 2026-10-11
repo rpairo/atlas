@@ -11,7 +11,7 @@ Set any of these on the element (or on any ancestor):
 ```css
 atlas-map {
   --atlas-paper: #f1f4f7;      /* board background */
-  --atlas-sheet: #ffffff;      /* nodes and detail panel */
+  --atlas-surface: #ffffff;    /* nodes and detail panel */
   --atlas-ink: #132033;        /* text */
   --atlas-ink-2: #55657c;      /* secondary text: subtitles, lane titles */
   --atlas-rule: #cdd6e1;       /* borders and lane rules */
@@ -39,7 +39,7 @@ To reuse a page's own design tokens, point the Atlas variables at them:
 ```css
 atlas-map {
   --atlas-paper: var(--paper);
-  --atlas-sheet: var(--surface);
+  --atlas-surface: var(--surface);
   --atlas-ink: var(--text);
   --atlas-out: var(--accent);
 }
@@ -55,7 +55,7 @@ the element. The dark defaults are:
 | Variable | Dark default |
 |---|---|
 | `--atlas-paper` | `#0c141e` |
-| `--atlas-sheet` | `#132030` |
+| `--atlas-surface` | `#132030` |
 | `--atlas-ink` | `#e3eaf2` |
 | `--atlas-ink-2` | `#98a9bd` |
 | `--atlas-rule` | `#2a3a4e` |
@@ -73,7 +73,7 @@ your page has its own dark mode, set the variables inside it:
 
 ```css
 @media (prefers-color-scheme: dark) {
-  atlas-map { --atlas-paper: #101418; --atlas-sheet: #181d23; }
+  atlas-map { --atlas-paper: #101418; --atlas-surface: #181d23; }
 }
 ```
 
@@ -117,7 +117,7 @@ picks one of these arrangements:
 |---|---|---|
 | **Panel at the side** | The board at its narrowest, plus `--atlas-panel-width` and a 20 px gap, fits | The board, with the detail panel in a column to its right, sticky while you scroll (and never taller than the window: it scrolls inside) |
 | **Panel below** | The side panel does not fit, but the board and the open detail fit the window's height together | The detail under the board, in the page; it covers nothing |
-| **Sheet** | Neither | The detail is a sheet at the foot of the window, folded to a 48 px head (lane, title, subtitle, counts of incoming and outgoing nodes). Its head opens it, up to `--atlas-sheet-height`, and so do activating the selected node again and `openDetail()`; open, it keeps the selected node in view above it. It stays open or folded from one selection to the next and folds on `load()`; Escape inside it folds it |
+| **Sheet** | Neither | The detail is a sheet at the foot of the window, folded to a 48 px head (lane, title, subtitle, counts of incoming and outgoing nodes). Its head opens it, up to `--atlas-sheet-height`, and so do activating the selected node again and `toggleDetail()`; open, it keeps the selected node in view above it. It stays open or folded from one selection to the next and folds on `load()`; Escape inside it folds it |
 | **Scrolling** | The container is narrower than the board's narrowest, but at least 720 px wide | The board keeps its lanes side by side and scrolls sideways |
 | **Stacked** | The container is narrower than 720 px and than the board's narrowest | Lanes one after another in a single column, without wires; the detail opens under the selected node |
 
@@ -131,10 +131,9 @@ buttons that jump to the other node. The two-column bands (before and after the 
 nodes per row; the selected node and its detail take a whole row, and its neighbour moves to fill
 the next gap.
 
-`panel: false` (or `panel="false"` on the element) hides the panel in every arrangement, and
+`panel: "none"` (or `panel="none"` on the element) hides the panel in every arrangement, and
 `panel: "side"`, `"below"` or `"sheet"` (or the same values of the attribute) forces one where the
-lanes are side by side. `map.arrangement` says which is in use (`{ board, panel, sheet }`), and the
-`arrange` event (`atlas-arrange` on the element) fires when it changes. Both are experimental.
+lanes are side by side.
 
 When the open detail is wide, its details, incoming and outgoing connections sit side by side.
 
