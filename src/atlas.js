@@ -640,19 +640,37 @@ export class Atlas extends EventTarget {
   /** Narrowest the board can be laid out side by side, measured once per build: it depends on the
    *  corridors and the lanes, not on the container. */
   _intrinsicWidth() {
-    const wrap = this._wrap, board = this._board, mode = wrap.dataset.mode;
-    wrap.dataset.mode = "flow";
-    board.style.width = "min-content";
-    const w = Math.ceil(board.getBoundingClientRect().width);
-    board.style.width = "";
-    if (mode === undefined) delete wrap.dataset.mode; else wrap.dataset.mode = mode;
+    // Measured on a hidden copy, never on the board itself: setting the live board to min-content
+    // and back left WebKit (Safari) with rows sized for the narrow layout, taller than their content,
+    // until something forced a full layout.
+    const shell = this._wrap.cloneNode(false);
+    shell.dataset.mode = "flow";
+    shell.removeAttribute("data-panel");
+    shell.setAttribute("aria-hidden", "true");
+    shell.style.cssText = "position:absolute;top:0;left:-100000px;visibility:hidden;pointer-events:none;contain:layout style";
+    const probe = this._board.cloneNode(true);
+    probe.removeAttribute("role");
+    probe.style.width = "min-content";
+    const wrap = this._boardWrap.cloneNode(false);
+    wrap.append(probe);
+    shell.append(wrap);
+    this.root.append(shell);
+    const w = Math.ceil(probe.getBoundingClientRect().width);
+    shell.remove();
     return w;
   }
 
   _placePanel() {
     const inline = this._wrap.dataset.panel === "inline";
-    // Inline, the detail goes inside the selected node's <li>: an <ol> holds only <li>s.
-    if (inline && this._selected && this._items.has(this._selected)) this._items.get(this._selected).append(this._panel);
+    // Inline, the detail goes inside the selected node's <li>: an <ol> holds only <li>s. The class
+    // lets that item take a whole row of a two-column band (no :has(), for Firefox before 121).
+    this._detailItem?.classList.remove("with-detail");
+    this._detailItem = null;
+    if (inline && this._selected && this._items.has(this._selected)) {
+      this._detailItem = this._items.get(this._selected);
+      this._detailItem.append(this._panel);
+      this._detailItem.classList.add("with-detail");
+    }
     else if (!inline && this._panel.parentNode !== this._wrap) this._wrap.insertBefore(this._panel, this._status);
     this._panel.hidden = this._selected === null || this._wrap.dataset.panel === "none";
   }

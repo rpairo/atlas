@@ -40,6 +40,7 @@ python3 -m http.server 8000
 | `node test/bench-route.mjs [board] [--vertical]` | Routing time and clashes for every selection of a board |
 | `npx --yes -p typescript@<version in ci.yml> tsc -p test/types` | The type declarations against `test/types/usage.ts` |
 | `scripts/audit.sh [board] [widths…]` | The browser audit, below |
+| `node scripts/audit-browsers.mjs [firefox] [webkit]` | The same audit in Firefox and WebKit, through Playwright |
 
 ### Browser audit
 
@@ -53,7 +54,10 @@ at each width, selects every node of the board and checks that:
 - when stacked, the lanes form one readable column, nothing overlaps, and the detail sits under
   the selected node;
 - a refused edit leaves the map usable, warnings follow undo, every arrow key moves the focus the
-  way of the arrow, and `reorderAll()` counts what it changes.
+  way of the arrow, and `reorderAll()` counts what it changes;
+- a node selected or reached by keyboard ends up on screen and clear of the detail drawer;
+- the selection, focus and live state follow edits, `<atlas-map>` loads the latest `src`, and
+  dimmed nodes keep 4.5:1 text contrast.
 
 ```bash
 scripts/audit.sh                                              # incident-response at six widths
@@ -63,9 +67,18 @@ EXTRA="&hostvars=1" scripts/audit.sh "" 1400 500                # themed from a 
 EXTRA="&dist=1" scripts/audit.sh "" 1400                        # the built file instead of src/
 ```
 
-The board path is relative to `test/browser/`. On macOS the script uses Google Chrome from
+`HEIGHT=800` runs a short window, and `EXTRA="&rtl=1"` a right-to-left page. The board path is
+relative to `test/browser/`. On macOS the script uses Google Chrome from
 `/Applications`; elsewhere set `CHROME` to the browser's path, and `CHROME_FLAGS` for extra flags.
 `scripts/shot.sh <page?query> <width> <height> <out.png>` takes a screenshot the same way.
+
+The same audit runs in Firefox and WebKit (Safari's engine) with Playwright, which is not a
+dependency of Atlas:
+
+```bash
+npm install --no-save playwright@1.63.0 && npx playwright install firefox webkit
+node scripts/audit-browsers.mjs firefox webkit
+```
 
 The audit is the closest thing to looking at the map, but it is not the same: before calling a
 visual change done, take screenshots at a few widths, in both themes, and look at them.

@@ -245,7 +245,7 @@ export function validate(model) {
     text(errors, `${p}.label`, e.label);
     text(errors, `${p}.details`, e.details);
     text(errors, `${p}.type`, e.type);
-    if (typeof e.type === "string" && Object.keys(model.edgeTypes).length && !Object.hasOwn(model.edgeTypes, e.type)) {
+    if (typeof e.type === "string" && Object.keys(model.edgeTypes).length && !Object.prototype.hasOwnProperty.call(model.edgeTypes, e.type)) {
       warnings.push(err(`${p}.type`, "unknown-type", `edge type "${e.type}" is not declared`));
     }
   });
@@ -391,10 +391,12 @@ const APPLY = {
     insertAt(m.lanes, { kind: "flow", ...compact(lane) }, clampIndex(index, m.lanes.length));
   },
   updateLane(m, { id, changes }, p) {
-    const l = find(m.lanes, id, p);
+    const i = indexOf(m.lanes, id, p);
     const { id: _ignored, ...rest } = changes ?? {};
-    assign(l, rest);
-    l.kind ??= "flow";
+    assign(m.lanes[i], rest);
+    // A kind left out falls back to "flow", placed first as normalize() places it: saving twice gives
+    // the same text.
+    if (m.lanes[i].kind == null) m.lanes[i] = { kind: "flow", ...m.lanes[i] };
   },
   moveLane(m, { id, index }, p) {
     const [l] = m.lanes.splice(indexOf(m.lanes, id, p), 1);
@@ -438,7 +440,7 @@ const APPLY = {
   },
   setMeta(m, { changes }) {
     assign(m.meta, changes ?? {});
-    m.meta.direction ??= "right";
+    if (m.meta.direction == null) m.meta = { direction: "right", ...m.meta };
   },
 };
 
