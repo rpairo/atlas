@@ -2619,12 +2619,9 @@ class Atlas extends EventTarget {
     this._fillNode(this._model.nodes.find(n => n.id === id), this._els.get(id));
   }
 
-  /** Selects a node (or null), shows its wires and its detail. */
+  /** Selects a node (or null), shows its wires and its detail. `announce` is for selections a person
+   *  made: screen readers then hear the summary. */
   select(id, { focus = true, animate = this.options.animate, reveal = focus, announce = false } = {}) {
-    this._select(id, { focus, animate, reveal }, announce);
-  }
-
-  _select(id, { focus = true, animate = this.options.animate, reveal = focus } = {}, announce = true) {
     if (this._destroyed) return;
     if (id !== null && !this._els.has(id)) id = null;
     const prev = this._selected;
@@ -3112,7 +3109,7 @@ class Atlas extends EventTarget {
       b.addEventListener("click", () => {
         const id = this._idOf.get(b);
         if (id === this._selected && this._wrap.dataset.panel === "sheet" && this._sheet !== "open") this.openDetail(true);
-        else this._select(id, {}, true);   // a person selected it: screen readers hear the summary
+        else this.select(id, { announce: true });
       });
       li.append(b);
       this._items.set(id, li);
@@ -3333,7 +3330,7 @@ class Atlas extends EventTarget {
   _step(focused, group, delta) {
     const r = this._ring;
     if (!(r && r.hub === this._selected && (focused === r.hub || focused === r.at?.id))) {
-      if (this._selected !== focused) this._select(focused, { focus: false }, false);
+      if (this._selected !== focused) this.select(focused, { focus: false });
       this._ring = { hub: focused, at: null };
     }
     const { hub, at } = this._ring;
@@ -3379,7 +3376,7 @@ class Atlas extends EventTarget {
         const labels = x.edges.map(e => e.label).filter(Boolean), details = x.edges.map(e => e.details).filter(Boolean);
         if (labels.length) b.append(txt("span", "rw", labels.join(" · ")));
         if (details.length) b.append(txt("span", "rd", details.join(" · ")));
-        b.addEventListener("click", () => this._select(x.id, {}, true));
+        b.addEventListener("click", () => this.select(x.id, { announce: true }));
         const li = el("li");
         li.append(b);
         ul.append(li);
