@@ -2333,8 +2333,6 @@ const DEFAULT_LABELS = {
   noneAll: "{hub}: no connections",
   cleared: "Selection cleared",
   // Marks (search results and other highlights).
-  marks: "{total} found",
-  noMarks: "Nothing found",
   markStep: "{n} of {total}: {title}",
   marked: "Match {n} of {total}",
   keys: "Arrow keys move between nodes; Enter selects. Alt with Down or Up steps through the selected node's connections, Alt with Right or Left through its outgoing or incoming ones. Escape goes back to it, then clears the selection.",
@@ -2346,7 +2344,7 @@ class Atlas extends EventTarget {
    * @param host element to render into (a shadow root is attached unless `options.shadow` is false)
    * @param options.document board (object or JSON text)
    * @param options.selected id of the node selected at start (default: meta.selected)
-   * @param options.panel "auto" | false — show the detail panel
+   * @param options.panel "auto" | "side" | "below" | "sheet" | false — where the detail goes (auto: by the room)
    * @param options.labels texts of the interface (incoming, outgoing, unassigned, selfLoop)
    * @param options.renderNode (node, button, live) => void — custom node content
    * @param options.animate trace wires when selecting (default true)
@@ -2407,13 +2405,15 @@ class Atlas extends EventTarget {
   }
   /** The marked nodes (see mark()), in reading order. */
   get marked() { return [...this._marks]; }
+  /** The current mark (see nextMark()), or null. */
+  get currentMark() { return this._markAt; }
 
   /**
    * Marks nodes, for example the results of a search (map.mark(map.find(text))) or of a filter:
    * they keep their look while every other node steps back, as around a selection. Unknown ids are
    * ignored; null or an empty list clears. Marks follow renames, leave with removed nodes and are
-   * cleared by load(); they are not saved and not undoable, and never change the selection.
-   * Screen readers hear how many were marked.
+   * cleared by load(); they are not saved and not undoable, and never change the selection. Each
+   * marked node is described to screen readers as "Match 2 of 5"; the count is the page's to say.
    */
   mark(ids) {
     if (this._destroyed) return;
@@ -2423,9 +2423,7 @@ class Atlas extends EventTarget {
     this._marks = next;
     this._markAt = null;
     this._highlight();
-    clearTimeout(this._counting);
-    // Said once the marks settle (a search box marks on every key).
-    this._counting = setTimeout(() => { if (!this._destroyed) this._announce(next.length ? fill(this.labels.marks, { total: next.length }) : (want.size || ids?.length ? this.labels.noMarks : "")); }, 500);
+    // Not announced: the page's search box says how many it found (both would be heard).
     this._emit("mark", { ids: [...next], current: null });
   }
 
@@ -2442,7 +2440,9 @@ class Atlas extends EventTarget {
     this._markAt = this._marks[i];
     this._highlight();
     this._setTabStop(this._markAt, focus, true);
-    this._announce(fill(this.labels.markStep, { n: i + 1, total: n, title: this._title(this._markAt) }));
+    // With focus on the node its description says "Match 2 of 5"; otherwise (focus stays in a search
+    // box) the live region says where the mark is.
+    if (!focus) this._announce(fill(this.labels.markStep, { n: i + 1, total: n, title: this._title(this._markAt) }));
     this._emit("mark", { ids: [...this._marks], current: this._markAt });
     return this._markAt;
   }
@@ -2619,9 +2619,8 @@ class Atlas extends EventTarget {
   }
 
   /** Selects a node (or null), shows its wires and its detail. */
-  select(id, { focus = true, animate = this.options.animate, reveal = focus, open } = {}) {
-    if (open !== undefined && !this._destroyed) this._sheet = open ? "open" : "peek";
-    this._select(id, { focus, animate, reveal }, true);
+  select(id, { focus = true, animate = this.options.animate, reveal = focus, announce = false } = {}) {
+    this._select(id, { focus, animate, reveal }, announce);
   }
 
   _select(id, { focus = true, animate = this.options.animate, reveal = focus } = {}, announce = true) {
@@ -2667,7 +2666,6 @@ class Atlas extends EventTarget {
     removeEventListener("resize", this._onResize);
     cancelAnimationFrame(this._frame);
     clearTimeout(this._saying);
-    clearTimeout(this._counting);
     const running = [...this._animations, ...this._ghostAnims, ...this._cues];
     this._animations = [];          // a transition's end callback sees it is no longer current
     this._ghostAnims = [];
@@ -2764,6 +2762,14 @@ class Atlas extends EventTarget {
     this._wrap.append(this._boardWrap, this._panel, this._status);
     this.root.replaceChildren(style, this._wrap);
     this._board.addEventListener("keydown", e => this._onKey(e));
+    // Escape in the open sheet folds it and goes back to the selected node.
+    this._panel.addEventListener("keydown", e => {
+      if (e.key !== "Escape" || this._wrap.dataset.panel !== "sheet" || this._sheet !== "open") return;
+      e.preventDefault();
+      e.stopPropagation();   // used here: a dialog around the map stays open
+      this.openDetail(false);
+      if (this._selected !== null) this._setTabStop(this._selected, true);
+    });
     // Alt with Left or Right is Back or Forward in Chrome and Edge on Windows and Linux: inside the
     // map it never leaves the page.
     this._wrap.addEventListener("keydown", e => { if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) e.preventDefault(); });
@@ -3120,7 +3126,7 @@ class Atlas extends EventTarget {
       b.addEventListener("click", () => {
         const id = this._idOf.get(b);
         if (id === this._selected && this._wrap.dataset.panel === "sheet" && this._sheet !== "open") this.openDetail(true);
-        else this.select(id);
+        else this._select(id, {}, true);   // a person selected it: screen readers hear the summary
       });
       li.append(b);
       this._items.set(id, li);
@@ -3173,16 +3179,23 @@ class Atlas extends EventTarget {
     const side = (parseFloat(getComputedStyle(this._wrap).getPropertyValue("--atlas-panel-width")) || 300) + PANEL_GAP;
     // Wires need the lanes side by side. When they do not fit, the board scrolls sideways inside
     // its box; only a really narrow container stacks the lanes.
-    const mode = width >= Math.min(needed, STACK_BELOW) ? "flow" : "stack";
-    let panel = this.options.panel === false ? "none" : mode === "stack" ? "inline" : width >= needed + side ? "side" : "below";
-    const before = `${this._wrap.dataset.mode}|${this._wrap.dataset.panel}`;
+    // A margin against flapping: a page scroll bar that comes and goes (17 px on Windows) must not
+    // swap the arrangement back and forth.
+    const was = this._wrap.dataset;
+    const mode = width >= Math.min(needed, STACK_BELOW) - (was.mode === "flow" ? 16 : 0) ? "flow" : "stack";
+    const asked = this.options.panel;
+    let panel = asked === false ? "none" : mode === "stack" ? "inline"
+      : ["side", "below", "sheet"].includes(asked) ? asked
+      : width >= needed + side - (was.panel === "side" ? 16 : 0) ? "side" : "below";
+    const before = `${was.mode}|${was.panel}`;
     if (this._wrap.dataset.mode !== mode) this._wrap.dataset.mode = mode;
-    if (panel === "below") {
+    if (panel === "below" && asked !== "below") {
       // Under the board, in the page, when the board and the open detail fit the window together;
       // otherwise a sheet kept at the foot of the window, folded to its head until it is opened.
       const vh = innerHeight || 800;
       const open = Math.min(Math.max(0.42 * vh, 280), vh - 120);
-      if (this._board.getBoundingClientRect().height + PANEL_GAP + open > vh - 24) panel = "sheet";
+      const slack = was.panel === "sheet" ? 24 : 0;
+      if (this._board.getBoundingClientRect().height + PANEL_GAP + open > vh - 24 - slack) panel = "sheet";
     }
     if (this._wrap.dataset.panel !== panel) this._wrap.dataset.panel = panel;
     if (`${mode}|${panel}` !== before) {
@@ -3374,16 +3387,21 @@ class Atlas extends EventTarget {
       box.dataset.dir = dir;
       const t = el(this._heading(1), "r-title");
       t.textContent = dir === "in" ? this.labels.incoming : this.labels.outgoing;
+      // One button per other node (parallel edges join their labels), as the summary counts them
+      // and the keyboard steps through them.
       const ul = el("ul");
-      for (const e of edges) {
+      const byNode = new Map();
+      for (const e of edges) { if (!byNode.has(other(e))) byNode.set(other(e), []); byNode.get(other(e)).push(e); }
+      for (const [o, es] of byNode) {
         const li = el("li");
         const b = el("button");
         b.type = "button";
-        const target = this._model.nodes.find(x => x.id === other(e));
-        b.append(txt("span", "rt", target?.title ?? other(e)));
-        if (e.label) b.append(txt("span", "rw", e.label));
-        if (e.details) b.append(txt("span", "rd", e.details));
-        b.addEventListener("click", () => this.select(other(e)));
+        const target = this._model.nodes.find(x => x.id === o);
+        b.append(txt("span", "rt", target?.title ?? o));
+        const labels = es.map(e => e.label).filter(Boolean), details = es.map(e => e.details).filter(Boolean);
+        if (labels.length) b.append(txt("span", "rw", labels.join(" · ")));
+        if (details.length) b.append(txt("span", "rd", details.join(" · ")));
+        b.addEventListener("click", () => this._select(o, {}, true));
         li.append(b);
         ul.append(li);
       }
@@ -3819,11 +3837,15 @@ class Atlas extends EventTarget {
       return;
     }
     if (key === "Escape") {
-      // From a connection, back to the selection; on the selection, clear it.
-      e.preventDefault();
+      // From a connection, back to the selection; on the selection, clear it. Without a selection
+      // the key is not used here, and goes on (to a dialog around the map, for example).
       this._ring = null;
-      if (this._selected !== null && id !== this._selected) { this._setTabStop(this._selected, true); return; }
-      if (this._selected !== null) { this.select(null); this._announce(this.labels.cleared); }
+      if (this._selected === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (id !== this._selected) { this._setTabStop(this._selected, true); return; }
+      this.select(null);
+      this._announce(this.labels.cleared);
       return;
     }
     const lanes = [L.before, ...L.flow, L.after].filter(Boolean).map(l => L.order.get(l.id));
@@ -4064,7 +4086,7 @@ const { Atlas } = __modules.atlas;
 const Base = typeof HTMLElement !== "undefined" ? HTMLElement : class {};
 
 class AtlasMap extends Base {
-  static get observedAttributes() { return ["src", "selected", "marked"]; }
+  static get observedAttributes() { return ["src", "selected"]; }
 
   constructor() {
     super();
@@ -4079,7 +4101,8 @@ class AtlasMap extends Base {
 
   connectedCallback() {
     if (this.atlas && !this.atlas.destroyed) return;
-    this.atlas = new Atlas(this, { selected: this.getAttribute("selected") ?? undefined, panel: this.getAttribute("panel") === "false" ? false : "auto" });
+    const panel = this.getAttribute("panel");
+    this.atlas = new Atlas(this, { selected: this.getAttribute("selected") ?? undefined, panel: panel === "false" ? false : ["side", "below", "sheet"].includes(panel) ? panel : "auto" });
     const start = () => {
       const inline = this.querySelector(':scope > script[type="application/json"]');
       if (inline) this._load(inline.textContent, ++this._seq);
@@ -4096,13 +4119,6 @@ class AtlasMap extends Base {
     if (!this.atlas || old === value) return;
     if (name === "src" && value) this._fetch(value);
     if (name === "selected") this.atlas.select(value, { focus: false });
-    if (name === "marked") this._mark();
-  }
-
-  /** The marked attribute: node ids separated by spaces. */
-  _mark() {
-    const value = this.getAttribute("marked");
-    this.atlas.mark(value ? value.split(/\s+/).filter(Boolean) : null);
   }
 
   disconnectedCallback() {
@@ -4137,7 +4153,6 @@ class AtlasMap extends Base {
       return this._fail(e.errors ?? [{ path: "", code: "load", message: String(e.message ?? e) }]);
     }
     this.error = null;
-    if (this.hasAttribute("marked")) this._mark();
     this._settle.resolve(this.atlas);
   }
 

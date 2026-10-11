@@ -122,7 +122,8 @@ try {
   // the detail never overlaps it.
   res.covered = [];
   if (wrap.dataset.panel === "sheet") {
-    map.select(ids[0], { focus: false, animate: false, open: true });
+    map.select(ids[0], { focus: false, animate: false });
+    map.openDetail(true);
     const panel = map.root.querySelector(".panel");
     panel.style.marginTop = "-160px";
     const r = panel.getBoundingClientRect();
@@ -215,7 +216,7 @@ try {
   } catch (e) { res.behaviour.push(`map broken after a refused rename: ${e.message}`); }
   map.connect(p, p);
   const self = map.warnings.some(w => w.code === "self");
-  map.select(p, { focus: false, animate: false });
+  map.select(p, { focus: false, animate: false, announce: true });
   if (!map._status.textContent.includes(map.labels.selfLoop)) res.behaviour.push(`the summary of a node that feeds itself does not say so (${map._status.textContent})`);
   map.undo();
   if (!self || map.warnings.some(w => w.code === "self")) res.behaviour.push("warnings do not follow undo");
@@ -233,12 +234,12 @@ try {
   // Assistive technology: the selection is the one current node (not a toggle on every node), the
   // same summary twice is said twice, and find() ignores accents and finds nothing for blank text.
   try {
-    map.select(live[0], { focus: false, animate: false });
+    map.select(live[0], { focus: false, animate: false, announce: true });
     const current = [...map._els.values()].filter(b => b.getAttribute("aria-current") === "true");
     if (current.length !== 1 || map._idOf.get(current[0]) !== live[0]) res.behaviour.push(`${current.length} nodes are aria-current`);
     if ([...map._els.values()].some(b => b.hasAttribute("aria-pressed"))) res.behaviour.push("nodes still carry aria-pressed");
     const said = map._status.textContent;
-    map.select(live[0], { focus: false, animate: false });
+    map.select(live[0], { focus: false, animate: false, announce: true });
     if (map._status.textContent !== "") res.behaviour.push("the same summary twice was not said again (the live region did not empty)");
     await new Promise(r => setTimeout(r, 200));
     if (map._status.textContent !== said) res.behaviour.push(`after emptying, the live region says "${map._status.textContent}"`);
@@ -246,6 +247,16 @@ try {
     const t0 = map.node(live[0]).title ?? live[0];
     const accented = t0.replace(/[aeiou]/i, ch => ({ a: "á", e: "é", i: "í", o: "ó", u: "ú" })[ch.toLowerCase()] ?? ch);
     if (!map.find(accented.toUpperCase()).includes(live[0])) res.behaviour.push(`find("${accented.toUpperCase()}") misses ${live[0]}`);
+    // Only what a person does is announced: a selection made by the page's code is not.
+    map.select(null, { focus: false });
+    await new Promise(r => setTimeout(r, 150));
+    const quiet = map._status.textContent;
+    map.select(live[1] ?? live[0], { focus: false, animate: false });
+    await new Promise(r => setTimeout(r, 150));
+    if (map._status.textContent !== quiet) res.behaviour.push(`a selection made by code was announced ("${map._status.textContent}")`);
+    map._els.get(live[0]).click();
+    await new Promise(r => setTimeout(r, 150));
+    if (map.selected === live[0] && !map._status.textContent.startsWith(map.node(live[0]).title ?? live[0])) res.behaviour.push(`a click on a node was announced as "${map._status.textContent}"`);
     map.select(null, { focus: false });
   } catch (e) { res.behaviour.push(`assistive check threw ${e.name}: ${e.message}`); }
   // Marks: a fill and a dot that read in both themes, nothing moves, the rest steps back (but not
@@ -419,7 +430,10 @@ try {
       const other = ids.find(x => x !== someone);
       m9.select(other, { focus: false, animate: false });
       if (m9.arrangement.sheet !== "open") res.behaviour.push("the sheet folded when another node was selected");
-      t9().click();
+      // Escape in the open sheet folds it and goes back to the selected node.
+      t9().focus();
+      t9().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true, cancelable: true }));
+      if (m9.arrangement.sheet !== "peek" || m9._idOf.get(m9.root.activeElement) !== other) res.behaviour.push(`Escape in the open sheet left it ${m9.arrangement.sheet}, focus on ${m9.root.activeElement?.className}`);
       m9._els.get(other).click();
       if (m9.arrangement.sheet !== "open") res.behaviour.push("activating the selected node again did not open the sheet");
       m9.destroy(); host9.remove(); scrollTo(0, 0);
