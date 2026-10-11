@@ -22,6 +22,7 @@ export const STYLES = `
   --out: var(--atlas-out, #a94e19);
   --in: var(--atlas-in, #2a64a8);
   --shadow: var(--atlas-shadow, rgba(20, 32, 51, .28));
+  --focus: var(--atlas-focus, var(--ink));   /* its own colour: blue would read as "incoming" */
   --radius: var(--atlas-radius, 6px);
   --mono: var(--atlas-font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
   --node-min: var(--atlas-node-min, 150px);
@@ -44,7 +45,7 @@ export const STYLES = `
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
 button { font: inherit; color: inherit; }
-:focus-visible { outline: 2px solid var(--in); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* Two stacking contexts: nothing of the board (its lanes and wires have z-indexes) paints over the
    detail panel when the panel is a drawer that overlaps it, and nothing of Atlas over the page. */
@@ -93,7 +94,6 @@ ol.nodes > li > .panel { margin-top: 10px; }
   position: relative; display: block; width: 100%; min-width: 0; text-align: start;
   background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px;
   padding: 9px 12px 10px; cursor: pointer;
-  transition: opacity .2s, border-color .2s, box-shadow .2s;
 }
 .node .t { display: block; font-weight: 600; font-size: 14px; line-height: 1.3; overflow-wrap: anywhere; }
 .node .s { display: block; font: 11.5px/1.35 var(--mono); color: var(--ink-2); margin-top: 2px; overflow-wrap: anywhere; }
@@ -102,9 +102,12 @@ ol.nodes > li > .panel { margin-top: 10px; }
    border and the secondary ink, which keeps 4.5:1 on the paper (WCAG 1.4.3). Opacity would not. */
 .board.has-selection .node:not(.on, .near-in, .near-out) { background: var(--paper); border-color: var(--grid); }
 .board.has-selection .node:not(.on, .near-in, .near-out) .t { color: var(--ink-2); }   /* colour only: a lighter weight would rewrap titles and move nodes */
-.node.on { border-color: var(--out); box-shadow: 0 0 0 1.5px var(--out); }
+.node.on { border-color: var(--out); box-shadow: 0 0 0 1.5px var(--out); transition: box-shadow .12s; }   /* one transition, not one per node and property */
 .node.near-out { border-color: var(--out); }
 .node.near-in { border-color: var(--in); }
+
+/* Removed nodes fade out here, above the board, where they were. */
+.ghosts { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
 
 /* Wires: above the nodes; routing keeps them in the corridors, so they never cover one. */
 svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 2; }

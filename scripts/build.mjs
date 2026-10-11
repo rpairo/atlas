@@ -5,7 +5,7 @@
 // the modules already evaluated. The sources keep to simple single-line import/export forms.
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 
-const ORDER = ["model", "layout", "route", "styles", "atlas", "element", "index"];
+const ORDER = ["model", "layout", "route", "styles", "motion", "atlas", "element", "index"];
 const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url))).version;
 
 function transform(name, code) {

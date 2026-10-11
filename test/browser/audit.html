@@ -289,13 +289,24 @@ try {
   map.addEventListener("select", e => sel.push(e.detail.id));
   const q0 = live[2] ?? live[0];
   try {
-    map.select(q0, { focus: false, animate: false });
-    map.renameNode(q0, "audit_sel");
-    if (map.selected !== "audit_sel") res.behaviour.push(`the selection did not follow a rename (${map.selected})`);
-    map.undo();
-    if (map.selected !== null || sel.at(-1) !== null) res.behaviour.push("undo of a rename left a stale selection or said nothing");
+    // A rename keeps the node's element (its live state, its place) and the selection follows it,
+    // whichever way it is renamed: renameNode, undo, redo, apply or batch.
     map.select(q0, { focus: false, animate: false });
     map.setState(q0, { status: "alarm" });
+    const el0 = map._els.get(q0);
+    const same = (id, how) => {
+      if (map._els.get(id) !== el0) res.behaviour.push(`${how}: the node got a new element`);
+      if (map.selected !== id || sel.at(-1) !== id) res.behaviour.push(`${how}: the selection is ${map.selected} (heard ${sel.at(-1)}), not ${id}`);
+      if (!(map._els.get(id)?.getAttribute("part") ?? "").includes("status-alarm")) res.behaviour.push(`${how}: the live state was lost`);
+    };
+    map.renameNode(q0, "audit_sel"); same("audit_sel", "renameNode");
+    map.undo(); same(q0, "undo of a rename");
+    map.redo(); same("audit_sel", "redo of a rename");
+    map.undo();
+    map.apply({ op: "renameNode", from: q0, to: "audit_sel" }); same("audit_sel", "apply of a rename");
+    map.undo();
+    map.batch(b => b.apply({ op: "renameNode", from: q0, to: "audit_sel" })); same("audit_sel", "batch of a rename");
+    map.undo(); same(q0, "undo of a batch rename");
     const back = map.node(q0);
     map.removeNode(q0);
     if (map.selected !== null || sel.at(-1) !== null) res.behaviour.push("removing the selected node left it selected or said nothing");
@@ -438,6 +449,158 @@ try {
     if (raced.atlas.destroyed || !raced.shadowRoot.querySelector(".node")) res.behaviour.push("a destroyed <atlas-map> stays empty when inserted again");
     raced.remove();
   } catch (e) { res.behaviour.push(`element check threw ${e.name}: ${e.message}`); }
+  // Motion, on an animated map (deterministic: animations are paused and moved to a time).
+  res.motion = [];
+  try {
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const hostM = document.createElement("div"); document.querySelector("main").append(hostM);
+    const fresh = (opts = {}) => { hostM.replaceChildren(); const h = document.createElement("div"); hostM.append(h); return new Atlas(h, { document: text, animate: true, ...opts }); };
+    const anims = m => [...m._animations];
+    const at = (m, ms) => { for (const a of anims(m)) { a.pause(); a.currentTime = ms; } };
+    const box = (m, id) => { const r = m._els.get(id).getBoundingClientRect(); return { x: r.left, y: r.top }; };
+    const frames = () => new Promise(r => setTimeout(r, 120));
+    // An edit that moves every node: a new first lane (or, in automatic lanes, a new source in front).
+    const shove = m => {
+      if (m._layout.mode === "lanes") return m.addLane({ id: "m_lane", title: "Motion" }, { index: 0 });
+      return m.addNode({ id: "m_new", title: "Motion" }, { edges: [{ from: "m_new", to: m._layout.order.get(m._layout.flow[0].id)[0] }] });
+    };
+    const rootAnims = m => m.root.getAnimations?.() ?? document.getAnimations();
+    let m = fresh();
+    await frames();
+    if (!reduced) {
+      // Reads come before writes: no layout read after the first animation started.
+      const log = [], gb = Element.prototype.getBoundingClientRect, an = Element.prototype.animate;
+      Element.prototype.getBoundingClientRect = function () { log.push("r"); return gb.call(this); };
+      Element.prototype.animate = function (...x) { log.push("a"); return an.apply(this, x); };
+      try { shove(m); } finally { Element.prototype.getBoundingClientRect = gb; Element.prototype.animate = an; }
+      const late = log.slice(log.indexOf("a") + 1).filter(x => x === "r").length;
+      if (log.includes("a") && late) res.motion.push(`an edit read the layout ${late} times after its first animation`);
+      if (!anims(m).length) res.motion.push("an edit that moves nodes did not animate");
+      // Interrupted halfway, the next edit starts every node from where it is seen.
+      const mid = Math.max(...anims(m).map(a => (a.effect.getTiming().delay ?? 0) + 120));
+      at(m, mid);
+      const seen = new Map([...m._els].map(([id]) => [id, box(m, id)]));
+      m.undo();
+      let jump = 0;
+      for (const [id, p] of seen) if (m._els.has(id)) { const q = box(m, id); jump = Math.max(jump, Math.hypot(q.x - p.x, q.y - p.y)); }
+      if (jump > 1) res.motion.push(`an edit during a move made nodes jump ${jump.toFixed(1)}px`);
+      m.settle();
+      // A selection made while nodes move waits for them before its wires are measured.
+      const someone = ids.find(x => model.edges.some(e => e.from === x || e.to === x));
+      shove(m);
+      let early = 0;
+      const paint = m._paint.bind(m);
+      m._paint = a => { if (anims(m).some(x => x.playState === "running" || x.playState === "pending")) early++; return paint(a); };
+      m.select(someone, { focus: false });
+      m._paint = paint;
+      if (early) res.motion.push("a selection during a move drew wires on nodes in flight");
+      m.settle(); m.undo(); m.settle();
+      // A removed node fades out as itself, where it was.
+      const gone = ids.find(x => x !== someone);
+      const was = m._els.get(gone).getBoundingClientRect(), title = m._els.get(gone).textContent;
+      m.removeNode(gone);
+      const ghost = [...m.root.querySelectorAll(".ghosts > .node, .board > .node[aria-hidden]")][0];
+      if (!ghost) res.motion.push("a removed node left no ghost");
+      else {
+        const g = ghost.getBoundingClientRect();
+        if (ghost.textContent !== title) res.motion.push(`the ghost of ${gone} reads "${ghost.textContent}"`);
+        if (Math.abs(g.left - was.left) > 0.5 || Math.abs(g.top - was.top) > 0.5) res.motion.push(`the ghost of ${gone} is ${(g.left - was.left).toFixed(1)},${(g.top - was.top).toFixed(1)}px off`);
+      }
+      m.settle(); m.undo(); m.settle();
+      // Lane titles travel with their nodes: at the start of a move a title keeps its distance to its node.
+      const lanes = m.toJSON().lanes?.filter(l => (l.kind ?? "flow") === "flow") ?? [];
+      if (lanes.length && res.mode === "flow" && m._layout.mode === "lanes") {
+        const l0 = lanes[0].id, n0 = m._layout.order.get(l0)[0];
+        const tEl = () => m.root.querySelector(`.lane[data-lane="${CSS.escape(l0)}"] .lane-title`);
+        const gap = () => { const a = tEl().getBoundingClientRect(), b = m._els.get(n0).getBoundingClientRect(); return [b.left - a.left, b.top - a.top]; };
+        const g0 = gap();
+        m.addLane({ id: "m_lane", title: "Motion" }, { index: 0 });
+        at(m, 0);
+        const g1 = gap();
+        if (Math.hypot(g1[0] - g0[0], g1[1] - g0[1]) > 1) res.motion.push(`a lane title left its node at the start of a move (${(g1[0] - g0[0]).toFixed(0)},${(g1[1] - g0[1]).toFixed(0)}px)`);
+        m.settle(); m.undo(); m.settle();
+      }
+      // Wires: an edit that changes none of the selection's wires leaves them alone; one that moves
+      // them reshapes them with the nodes where the browser can animate a path.
+      if (res.mode === "flow") {
+        m.select(someone, { focus: false, animate: false });
+        const before = [...m.root.querySelectorAll(".wire")];
+        const other = ids.find(x => x !== someone && !model.edges.some(e => (e.from === x && e.to === someone) || (e.to === x && e.from === someone)));
+        m.updateNode(other, { details: ["motion audit"] });
+        m.settle();
+        const after = [...m.root.querySelectorAll(".wire")];
+        if (before.length !== after.length || before.some((w, i) => w !== after[i])) res.motion.push("an edit that changed no wire drew the wires again");
+        m.undo(); m.settle();
+        const mover = someone;
+        if (CSS.supports("d", 'path("M0 0")')) {
+          // Every node moves: the selected node's wires that keep their shape must reshape.
+          const { sameShape } = await import("../../src/motion.js");
+          m.select(mover, { focus: false, animate: false });
+          const key = w => `${w.k}:${w.from}>${w.to}`;
+          const was = new Map(m._wires.map(w => [key(w), w.screen]));
+          shove(m);
+          const reshaped = anims(m).filter(a => a.effect.target?.classList?.contains("wire")).length;
+          m.settle();
+          const should = m._wires.filter(w => was.has(key(w)) && sameShape(was.get(key(w)), w.screen) && JSON.stringify(was.get(key(w))) !== JSON.stringify(w.screen));
+          if (should.length && !reshaped) res.motion.push(`${should.length} wires of ${mover} kept their shape but did not reshape with it`);
+          m.undo(); m.settle();
+        }
+      }
+    } else {
+      shove(m);
+      const travel = anims(m).filter(a => a.effect.getKeyframes().some(k => k.transform && k.transform !== "none"));
+      if (travel.length) res.motion.push(`under reduced motion an edit moved ${travel.length} things`);
+      m.settle(); m.undo(); m.settle();
+    }
+    // The detail panel opening below the board does not cut the wires being traced, and a map built
+    // with a selection traces it.
+    if (res.mode === "flow" && !reduced) {
+      const someone = ids.find(x => model.edges.some(e => e.from === x || e.to === x));
+      m = fresh({ selected: someone });
+      await frames();
+      if (!m.root.querySelector(".wire.draw")) res.motion.push("the selection a map starts with was never traced");
+      m.select(null, { focus: false });
+      await frames();
+      for (const id of ids.filter(x => model.edges.some(e => e.from === x || e.to === x)).slice(0, 6)) {
+        m.select(id, { focus: false });
+        await frames();
+        if (!m.root.querySelector(".wire.draw")) { res.motion.push(`selecting ${id} (panel ${m._wrap.dataset.panel}): its wires stopped tracing`); break; }
+      }
+    }
+    // The rows follow a change of the board's width (WebKit kept them at their old heights, and
+    // nodes spilled into the next row).
+    if (res.mode === "flow") {
+      m = fresh();
+      await frames();
+      hostM.style.width = `${Math.round(hostM.getBoundingClientRect().width * 0.8)}px`;
+      await frames();
+      // What the resize observer does on the next frame (headless Chrome may produce no frame).
+      m._applyMode(); m._refreshRows?.(); m._placePanel();
+      const live = m._board.getBoundingClientRect().height;
+      m.load(text);
+      const built = m._board.getBoundingClientRect().height;
+      hostM.style.width = "";
+      if (Math.abs(live - built) > 1) res.motion.push(`after the board got narrower its rows were ${(live - built).toFixed(1)}px off`);
+    }
+    // Selecting starts few transitions, not one per node.
+    m.select(ids[1] ?? ids[0], { focus: false });
+    const css = rootAnims(m).filter(a => a instanceof CSSTransition).length;
+    if (css > 3) res.motion.push(`a selection started ${css} CSS transitions`);
+    // animate: false means no motion at all.
+    m = fresh({ animate: false });
+    shove(m);
+    if (anims(m).length || rootAnims(m).some(a => !(a instanceof CSSTransition))) res.motion.push("animate: false still animated an edit");
+    // A destroyed map changes nothing and says nothing.
+    m = fresh();
+    let heard = 0;
+    m.addEventListener("change", () => heard++); m.addEventListener("select", () => heard++);
+    shove(m);
+    heard = 0;
+    m.destroy();
+    m.undo(); m.addNode({ id: "m_after" }); m.select(ids[0]); m.load(text);
+    if (heard) res.motion.push(`a destroyed map fired ${heard} events`);
+    hostM.remove();
+  } catch (e) { res.motion.push(`motion check threw ${e.name}: ${e.message}`); }
   out(res);
 } catch (e) {
   out({ error: String(e && e.stack || e) });

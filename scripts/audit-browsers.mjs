@@ -10,7 +10,7 @@ import { firefox, webkit, chromium } from "playwright";
 const REPO = fileURLToPath(new URL("..", import.meta.url));
 const engines = { firefox, webkit, chromium };
 const wanted = process.argv.slice(2).length ? process.argv.slice(2) : ["firefox", "webkit"];
-const KEYS = ["missing", "underNode", "crossings", "close", "shortTip", "outside", "moved", "unpainted", "covered", "stack", "groups", "behaviour", "hidden", "loops"];
+const KEYS = ["missing", "underNode", "crossings", "close", "shortTip", "outside", "moved", "unpainted", "covered", "stack", "groups", "motion", "behaviour", "hidden", "loops"];
 
 const runs = [];
 for (const b of ["incident-response", "dependencies", "state-machine", "org-chart"]) for (const w of [1400, 900, 500]) runs.push({ board: `../../examples/${b}/board.json`, w });

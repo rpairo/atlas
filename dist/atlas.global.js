@@ -1804,6 +1804,7 @@ const STYLES = `
   --out: var(--atlas-out, #a94e19);
   --in: var(--atlas-in, #2a64a8);
   --shadow: var(--atlas-shadow, rgba(20, 32, 51, .28));
+  --focus: var(--atlas-focus, var(--ink));   /* its own colour: blue would read as "incoming" */
   --radius: var(--atlas-radius, 6px);
   --mono: var(--atlas-font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
   --node-min: var(--atlas-node-min, 150px);
@@ -1826,7 +1827,7 @@ const STYLES = `
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
 button { font: inherit; color: inherit; }
-:focus-visible { outline: 2px solid var(--in); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 /* Two stacking contexts: nothing of the board (its lanes and wires have z-indexes) paints over the
    detail panel when the panel is a drawer that overlaps it, and nothing of Atlas over the page. */
@@ -1864,21 +1865,17 @@ ol.nodes > li > .panel { margin-top: 10px; }
 .band.after .lane-title { order: 2; }
 .flow { display: grid; min-width: 0; position: relative; z-index: 1; }
 .lane { display: grid; min-width: 0; }
-.group-box {
-  position: relative; border: 1px dashed var(--rule); border-radius: calc(var(--radius) + 2px);
-  margin: -6px; pointer-events: none; z-index: 0;
-}
-.group-box > span {
-  position: absolute; top: -9px; left: 10px; max-width: calc(100% - 20px); padding: 0 6px; background: var(--paper);
-  font: 500 11px/1.4 var(--mono); color: var(--ink-2); overflow-wrap: anywhere;
-}
+/* A group: a dashed box behind its nodes and, when titled, a legend in a grid row of its own that
+   the box's top edge runs through (atlas.js sets the rows, margins and nesting insets). */
+.group-box { position: relative; border: 1px dashed var(--rule); border-radius: calc(var(--radius) + 2px); pointer-events: none; z-index: 0; }
+.group-legend { position: relative; z-index: 1; justify-self: start; align-self: start; min-width: 0; max-width: calc(100% - 20px); margin-bottom: -6px; pointer-events: none; }
+.group-legend > span { display: block; padding: 0 6px; background: var(--paper); font: 500 11px/16px var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
 
 /* Nodes */
 .node {
   position: relative; display: block; width: 100%; min-width: 0; text-align: start;
   background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px;
   padding: 9px 12px 10px; cursor: pointer;
-  transition: opacity .2s, border-color .2s, box-shadow .2s;
 }
 .node .t { display: block; font-weight: 600; font-size: 14px; line-height: 1.3; overflow-wrap: anywhere; }
 .node .s { display: block; font: 11.5px/1.35 var(--mono); color: var(--ink-2); margin-top: 2px; overflow-wrap: anywhere; }
@@ -1887,9 +1884,12 @@ ol.nodes > li > .panel { margin-top: 10px; }
    border and the secondary ink, which keeps 4.5:1 on the paper (WCAG 1.4.3). Opacity would not. */
 .board.has-selection .node:not(.on, .near-in, .near-out) { background: var(--paper); border-color: var(--grid); }
 .board.has-selection .node:not(.on, .near-in, .near-out) .t { color: var(--ink-2); }   /* colour only: a lighter weight would rewrap titles and move nodes */
-.node.on { border-color: var(--out); box-shadow: 0 0 0 1.5px var(--out); }
+.node.on { border-color: var(--out); box-shadow: 0 0 0 1.5px var(--out); transition: box-shadow .12s; }   /* one transition, not one per node and property */
 .node.near-out { border-color: var(--out); }
 .node.near-in { border-color: var(--in); }
+
+/* Removed nodes fade out here, above the board, where they were. */
+.ghosts { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
 
 /* Wires: above the nodes; routing keeps them in the corridors, so they never cover one. */
 svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; z-index: 2; }
@@ -1960,11 +1960,98 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .atlas[data-mode="stack"] .band ol.nodes > li.with-detail { grid-column: 1 / -1 !important; }
 .atlas[data-mode="stack"] svg.wires { display: none; }
 .atlas[data-mode="stack"] .board { gap: 26px !important; width: auto; min-width: 0; }
-.atlas[data-mode="stack"] .group-box { display: none; }
+.atlas[data-mode="stack"] .group-box, .atlas[data-mode="stack"] .group-legend { display: none !important; }
 .atlas[data-mode="stack"] .lane-gap { display: none; }
 `;
 
 return { STYLES };
+})();
+
+__modules.motion = (() => {
+// Motion planning for edits: pure, so it is tested in Node. The renderer (atlas.js) measures where
+// every node was and where it is now, asks for a plan, and plays it with the Web Animations API.
+//
+// Stages: exit (ghosts of removed nodes fade out) → move → enter (new nodes fade in), each skipped
+// when empty. A move lasts as long as its longest travel needs (longer travel, longer move), never
+// a fixed time, so an edit and its undo take the same time. When many nodes change lane and many
+// change row, the move runs in two parts, along the flow first and then across it (staging, Heer
+// and Robertson 2007), instead of every node cutting diagonally through the others at once.
+
+const MOTION = {
+  exit: 150,                            // ms
+  enter: 200,                           // ms
+  exitEase: "cubic-bezier(.3,0,1,1)",
+  enterEase: "cubic-bezier(0,0,0,1)",
+  ease: "cubic-bezier(.2,0,0,1)",
+  cue: 600,                             // ms: the outline that marks a change under reduced motion
+  splitAt: 3,                           // nodes changing lane, and nodes changing row, to split a move
+};
+
+/** Duration of a move whose longest travel is `d` px: 250 ms at least, 700 ms at most. */
+function moveMs(d) {
+  return Math.round(Math.min(700, Math.max(250, 150 + 20 * Math.sqrt(Math.max(0, d)))));
+}
+
+/**
+ * Displacement [along, across] the flow of a screen displacement [dx, dy], for a flow direction.
+ */
+function toFlow(direction, dx, dy) {
+  switch (direction) {
+    case "left": return [-dx, dy];
+    case "down": return [dy, dx];
+    case "up": return [-dy, dx];
+    default: return [dx, dy];
+  }
+}
+
+/**
+ * The plan of a move. `moves` holds, per node that moves, its screen displacement from where it
+ * was to where it is now ([dx, dy]). Returns the total duration, the share of it spent along the
+ * flow when the move is split (`f`, 1 when it is not), and per node the screen offset it still has
+ * after the along-the-flow part (`mid`, or null).
+ */
+function planMove(moves, direction) {
+  const flow = moves.map(m => ({ ...m, d: toFlow(direction, m.dx, m.dy) }));
+  const along = flow.filter(m => Math.abs(m.d[0]) >= 0.5).length;
+  const across = flow.filter(m => Math.abs(m.d[1]) >= 0.5).length;
+  const split = along >= MOTION.splitAt && across >= MOTION.splitAt;
+  if (!split) {
+    const ms = flow.length ? moveMs(Math.max(...flow.map(m => Math.hypot(m.dx, m.dy)))) : 0;
+    return { ms, f: 1, split: false, moves: flow.map(m => ({ id: m.id, dx: m.dx, dy: m.dy, mid: null })) };
+  }
+  const a = moveMs(Math.max(...flow.map(m => Math.abs(m.d[0]))));
+  const c = moveMs(Math.max(...flow.map(m => Math.abs(m.d[1]))));
+  const vertical = direction === "down" || direction === "up";
+  // After the along part a node is in its new lane and its old row: what is left is the across part.
+  return {
+    ms: a + c, f: a / (a + c), split: true,
+    moves: flow.map(m => ({ id: m.id, dx: m.dx, dy: m.dy, mid: vertical ? [m.dx, 0] : [0, m.dy] })),
+  };
+}
+
+/**
+ * Whether a wire can reshape from `a` to `b` (screen points) by moving its vertices: same number of
+ * points, and every segment keeps its orientation and its direction. Moving each vertex in a
+ * straight line then keeps every segment horizontal or vertical on the way.
+ */
+function sameShape(a, b) {
+  if (!a || !b || a.length !== b.length || a.length < 2) return false;
+  for (let i = 1; i < a.length; i++) {
+    const s = segment(a[i - 1], a[i]), t = segment(b[i - 1], b[i]);
+    if (s !== t) return false;
+  }
+  return true;
+}
+
+function segment(p, q) {
+  const dx = q.x - p.x, dy = q.y - p.y;
+  if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) return "0";
+  if (Math.abs(dy) < 0.5) return dx > 0 ? "E" : "W";
+  if (Math.abs(dx) < 0.5) return dy > 0 ? "S" : "N";
+  return "?";
+}
+
+return { MOTION, moveMs, toFlow, planMove, sameShape };
 })();
 
 __modules.atlas = (() => {
@@ -1984,6 +2071,7 @@ const M = __modules.model;
 const { layout: computeLayout, bestInsertion, inversions } = __modules.layout;
 const { route, demand, corridorSize, sideSize, ROUTE } = __modules.route;
 const { STYLES } = __modules.styles;
+const { MOTION, planMove, sameShape } = __modules.motion;
 
 const NS = "http://www.w3.org/2000/svg";
 const SPEED = 1150;          // px per second: every wire traces at the same speed
@@ -1994,7 +2082,9 @@ const MIN_OUTER = 26;
 const STACK_BELOW = 720;   // px of container under which lanes stack
 const BAND_NODE_MIN = 96;  // px: narrowest a node of a band gets
 const PANEL_GAP = 20;      // px between the board and a side panel (.atlas gap)
-const STAGES = { remove: 200, move: 450, add: 250, stagger: 30, staggerCap: 120 };
+// Wires reshape with the nodes where the browser animates the `d` of a path (Chrome, Edge, Firefox);
+// elsewhere they fade out and trace again once the nodes are in place.
+const MORPH = typeof CSS !== "undefined" && CSS.supports?.("d", 'path("M0 0")') === true;
 const STATUS = /^[a-z0-9_-]{1,32}$/;
 const ARROWS = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] };
 
@@ -2034,7 +2124,11 @@ class Atlas extends EventTarget {
     this._rev = 0;
     this._selected = null;
     this._layout = null;
-    this._animations = [];
+    this._animations = [];        // the current edit's motion (nodes, titles, boxes, wires)
+    this._ghostAnims = [];        // removed nodes fading out (survive a new edit)
+    this._cues = [];              // reduced motion: outlines and fades that mark a change
+    this._wireEls = new Map();    // wire key → its drawn elements and path
+    this._after = null;           // a selection made while nodes moved: paint it when they stop
     this._frame = 0;
     this._mount();
     this._model = M.normalize({ nodes: [] });
@@ -2080,6 +2174,7 @@ class Atlas extends EventTarget {
 
   /** Replaces the board. A board not yet ordered by Atlas is tidied once (fewest crossings). */
   load(input, { optimize, selected } = {}) {
+    if (this._destroyed) return this;
     const { model, warnings } = M.load(input);
     const tidy = optimize ?? model.meta.ordered !== true;
     let m = model;
@@ -2125,30 +2220,9 @@ class Atlas extends EventTarget {
   updateNode(id, changes) { return this.apply({ op: "updateNode", id, changes }); }
   moveNode(id, { lane, index } = {}) { return this.apply({ op: "moveNode", id, lane, index }); }
   removeNode(id) { return this.apply({ op: "removeNode", id }); }
-  renameNode(from, to) {
-    // The element stays the same node on screen: it glides (if anything), never fades out and in.
-    const swapKey = (map, a, b) => { if (map.has(a)) { map.set(b, map.get(a)); map.delete(a); } };
-    const rekey = (a, b) => {
-      swapKey(this._els, a, b);
-      swapKey(this._items, a, b);
-      swapKey(this._live, a, b);
-      this._idOf.set(this._els.get(b), b);
-    };
-    const moved = this._els.has(from) && !this._els.has(to);
-    const selected = this._selected === from;
-    if (moved) rekey(from, to);
-    if (selected) this._selected = to;
-    let rev;
-    try {
-      rev = this.apply({ op: "renameNode", from, to });
-    } catch (e) {
-      if (moved) rekey(to, from);   // the edit was refused: the screen keeps the old id
-      if (selected) this._selected = from;
-      throw e;
-    }
-    if (selected) this._emit("select", { id: to });
-    return rev;
-  }
+  /** Changes an id. The node keeps its element on screen (and its live state, focus and selection),
+   *  also when undo or redo renames it back. */
+  renameNode(from, to) { return this.apply({ op: "renameNode", from, to }); }
   connect(from, to, { id, label, details, type } = {}) {
     return this.apply({ op: "addEdge", edge: clean({ id, from, to, label, details, type }) });
   }
@@ -2185,6 +2259,7 @@ class Atlas extends EventTarget {
    * pairs of nodes would swap. Pinned nodes keep their place.
    */
   reorderAll({ dryRun = false } = {}) {
+    if (this._destroyed) return { swaps: 0 };
     const now = this._layout ?? computeLayout(this._model);
     let m = withOrder(this._model, computeLayout(this._model, { optimize: true }), true);
     // Groups and constraints apply again when the result is drawn. A lane where that would move a
@@ -2196,11 +2271,12 @@ class Atlas extends EventTarget {
     // Counted on the order that results, after pinned nodes went back to their places.
     const swaps = inversions(now, computeLayout(m));
     if (dryRun || swaps === 0) return { swaps };
-    this._commit(this._model, m, this._warnings, { long: true });
+    this._commit(this._model, m, this._warnings);
     return { swaps };
   }
 
   undo() {
+    if (this._destroyed) return false;
     const prev = this._history.pop();
     if (!prev) return false;
     this._future.push(this._model);
@@ -2208,6 +2284,7 @@ class Atlas extends EventTarget {
     return true;
   }
   redo() {
+    if (this._destroyed) return false;
     const next = this._future.pop();
     if (!next) return false;
     this._history.push(this._model);
@@ -2221,7 +2298,7 @@ class Atlas extends EventTarget {
 
   /** Live content (for example from a home automation system): never moves anything. */
   setState(id, { subtitle, status } = {}) {
-    if (!this._els.has(id)) return;
+    if (this._destroyed || !this._els.has(id)) return;
     const s = { ...(this._live.get(id) ?? {}) };
     if (subtitle !== undefined) s.subtitle = subtitle === null ? undefined : String(subtitle);
     if (status !== undefined) s.status = status !== null && STATUS.test(String(status)) ? String(status) : undefined;
@@ -2231,13 +2308,17 @@ class Atlas extends EventTarget {
 
   /** Selects a node (or null), shows its wires and its detail. */
   select(id, { focus = true, animate = this.options.animate } = {}) {
+    if (this._destroyed) return;
     if (id !== null && !this._els.has(id)) id = null;
     const prev = this._selected;
     this._selected = id;
     this._highlight();
     this._fillPanel();
     this._placePanel();
-    this._paint(animate);
+    // While nodes move, wires measured now would start from boxes in flight: they are drawn once
+    // the nodes are in place.
+    if (this._moving()) this._after = { animate };
+    else this._paint(animate);
     if (id !== null) this._setTabStop(id, focus);
     if (prev !== id) this._emit("select", { id });
     this._announce(id === null ? "" : this._summary(id));
@@ -2245,21 +2326,28 @@ class Atlas extends EventTarget {
 
   /** Finishes any running transition at once (its end state) and redraws the wires. */
   settle() {
-    const running = this._animations;
-    this._animations = [];
+    if (this._destroyed) return;
+    const running = [...this._animations, ...this._ghostAnims, ...this._cues];
+    this._animations = [];        // a transition's end callback sees it is no longer current
+    this._ghostAnims = [];
+    this._cues = [];
+    this._after = null;
     running.forEach(a => a.finish());
-    for (const g of this._board.querySelectorAll(":scope > .node[aria-hidden]")) g.remove();
+    this._ghosts.replaceChildren();
     this._paint(false);
   }
 
   /** Frees the map: observers, frames and animations stop and the content is removed. Final: a
    *  destroyed instance draws nothing more; create a new one to show a board again. */
   destroy() {
+    if (this._destroyed) return;
     this._destroyed = true;
     this._ro?.disconnect();
     cancelAnimationFrame(this._frame);
-    const running = this._animations;
+    const running = [...this._animations, ...this._ghostAnims, ...this._cues];
     this._animations = [];          // a transition's end callback sees it is no longer current
+    this._ghostAnims = [];
+    this._cues = [];
     running.forEach(a => a.cancel());
     this.root.replaceChildren();
   }
@@ -2268,7 +2356,8 @@ class Atlas extends EventTarget {
   // -------------------------------------------------------------------------------------------
   // Internals: commit, history
 
-  _commit(before, after, warnings, { long = false } = {}) {
+  _commit(before, after, warnings) {
+    if (this._destroyed) return;
     // An edit that changes nothing (same title, empty list of operations) makes no undo step.
     if (after === before || JSON.stringify(M.serialize(after)) === JSON.stringify(M.serialize(before))) return;
     this._history.push(before);
@@ -2278,8 +2367,10 @@ class Atlas extends EventTarget {
     this._warnings = warnings ?? [];
     this._rev++;
     const d = M.diff(before, after);
-    this._render({ animate: true, diff: d, long });
+    const followed = this._follow(before, after, d);
+    this._render({ animate: true, diff: d });
     this._emit("change", { rev: this._rev, diff: d, warnings: this.warnings });
+    if (followed) this._emit("select", { id: this._selected });
   }
 
   _swap(model) {
@@ -2288,8 +2379,33 @@ class Atlas extends EventTarget {
     this._warnings = M.validate(model).warnings;
     this._rev++;
     const d = M.diff(before, model);
+    const followed = this._follow(before, model, d);
     this._render({ animate: true, diff: d });
     this._emit("change", { rev: this._rev, diff: d, warnings: this.warnings });
+    if (followed) this._emit("select", { id: this._selected });
+  }
+
+  /** A node renamed by an edit, a batch, undo or redo keeps its element on screen (with its live
+   *  state, its focus and its place), and the selection follows it: a rename leaves a node at the
+   *  same index with the same content under another id. Returns whether the selection moved. */
+  _follow(before, after, d) {
+    if (!d.nodes.removed.length || !d.nodes.added.length) return false;
+    const was = new Map(before.nodes.map((n, i) => [n.id, i]));
+    const added = new Set(d.nodes.added);
+    const swapKey = (map, a, b) => { if (map.has(a)) { map.set(b, map.get(a)); map.delete(a); } };
+    let followed = false;
+    for (const from of d.nodes.removed) {
+      const i = was.get(from), to = after.nodes[i]?.id;
+      if (!added.has(to) || !this._els.has(from) || this._els.has(to)) continue;
+      const { id: _a, ...a } = before.nodes[i], { id: _b, ...b } = after.nodes[i];
+      if (JSON.stringify(a) !== JSON.stringify(b)) continue;
+      swapKey(this._els, from, to);
+      swapKey(this._items, from, to);
+      swapKey(this._live, from, to);
+      this._idOf.set(this._els.get(to), to);
+      if (this._selected === from) { this._selected = to; followed = true; }
+    }
+    return followed;
   }
 
   _emit(type, detail) {
@@ -2311,6 +2427,13 @@ class Atlas extends EventTarget {
     this._svg = document.createElementNS(NS, "svg");
     this._svg.setAttribute("class", "wires");
     this._svg.setAttribute("aria-hidden", "true");
+    // Three layers: halos under every wire, wires, then the dots and arrowheads on top.
+    this._halos = svgEl("g");
+    this._lines = svgEl("g");
+    this._marks = svgEl("g");
+    this._svg.append(this._halos, this._lines, this._marks);
+    this._ghosts = el("div", "ghosts");   // removed nodes fading out, kept across rebuilds
+    this._ghosts.setAttribute("aria-hidden", "true");
     this._panel = el("aside", "panel");
     this._panel.setAttribute("part", "panel");
     this._status = el("div", "status");
@@ -2330,19 +2453,30 @@ class Atlas extends EventTarget {
     cancelAnimationFrame(this._frame);
     this._frame = requestAnimationFrame(() => {
       this._applyMode();
+      this._refreshRows();
       this._placePanel();
-      if (!this._running()) this._paint(false);
+      // Wires are drawn again only when the board's geometry changed, not when the page around it
+      // did (the detail panel opening below it resizes the host): that would cut a wire being traced.
+      if (!this._moving() && this._geometryKey() !== this._painted) this._paint(false);
     });
   }
 
-  _running() {
+  /** True while nodes move after an edit. */
+  _moving() {
     return this._animations.some(a => a.playState === "running" || a.playState === "pending");
+  }
+
+  /** What the drawn wires depend on: the selection, the arrangement, the board's size, the board. */
+  _geometryKey(W, H) {
+    if (this._selected === null || !this._flowMode()) return `none|${this._wrap.dataset.mode}`;
+    if (W === undefined) ({ width: W, height: H } = this._board.getBoundingClientRect());
+    return `${this._selected}|${Math.round(W)}x${Math.round(H)}|${this._rev}`;
   }
 
   // -------------------------------------------------------------------------------------------
   // DOM: render the layout
 
-  _render({ animate = false, diff = null, long = false } = {}) {
+  _render({ animate = false, diff = null } = {}) {
     if (this._destroyed) return;
     this._board.setAttribute("aria-label", this._model.meta.title || this.labels.board);
     this._panel.setAttribute("aria-label", this.labels.detail);
@@ -2352,10 +2486,12 @@ class Atlas extends EventTarget {
     if (lost) this._selected = null;
     const active = this._active();
     const hadFocus = active !== null && this._board.contains(active);
-    const motion = animate && !reducedMotion();
-    this._animations.forEach(a => a.finish());
-    this._animations = [];
-    const first = motion ? this._rects() : null;
+    // Motion: none with animate: false; under reduced motion only cues that do not travel.
+    const mode = !animate || !this.options.animate ? "off" : reducedMotion() ? "reduce" : "full";
+    // Where everything is on screen, read before anything is written (and before running motion is
+    // stopped: a node in flight starts its next move from where it is seen, not from where it was going).
+    const first = mode === "off" ? null : this._snapshot();
+    this._stopMotion(mode === "off");
 
     const L = computeLayout(this._model);
     this._layout = L;
@@ -2364,7 +2500,9 @@ class Atlas extends EventTarget {
     this._need = need;
     this._build(L, need);
     this._minWidth = this._intrinsicWidth();
+    this._rowsWidth = this._board.getBoundingClientRect().width;   // the width its rows were sized at
     this._applyMode();
+    this._refreshRows();
     this._highlight();
     this._fillPanel();
     this._placePanel();
@@ -2375,7 +2513,7 @@ class Atlas extends EventTarget {
     }
     if (lost) { this._emit("select", { id: null }); this._announce(""); }
 
-    if (motion && first) this._transition(first, diff, long);
+    if (first) this._transition(first, diff, mode);
     else this._paint(false);
   }
 
@@ -2435,6 +2573,7 @@ class Atlas extends EventTarget {
       const sec = el("section", `band ${kind}`);
       sec.dataset.lane = band.id;
       const title = txt(this._heading(0), "lane-title", band.title ?? "");
+      title.dataset.key = `lane:${band.id}`;   // titles and group boxes glide with their nodes
       const spacer = el("div", `channel ch-${kind === "before" ? "ca" : "cz"}`);
       const list = el("ol", "nodes");
       const ids = L.order.get(band.id);
@@ -2466,6 +2605,7 @@ class Atlas extends EventTarget {
     parts.push(cls(el("div", "channel ch-ct"), "lane-gap"));
 
     const flow = el("div", "flow");
+    this._flowEl = flow;
     const rows = L.rows;
     if (vertical) {
       const tracks = [];
@@ -2479,8 +2619,30 @@ class Atlas extends EventTarget {
       for (let k = 0; k < N; k++) tracks.push(`var(--g${k})`, "minmax(var(--node-min), 1fr)");
       tracks.push(`var(--g${N})`);
       flow.style.gridTemplateColumns = (reversed ? reverseTracks(tracks) : tracks).join(" ");
-      flow.style.gridTemplateRows = `auto repeat(${rows}, auto)`;
       flow.style.rowGap = "10px";
+    }
+    // Group legends take grid tracks of their own, so a legend never sits on a node or a lane title.
+    // Across the flow (right, left) the rows are shared by every lane: a slot where titled groups
+    // start gets one legend row per group starting there, outer groups first. Down or up, each lane
+    // gets legend rows above its nodes, one per level of nesting.
+    const spansOf = new Map(L.flow.map(l => [l.id, L.groups.filter(s => s.lane === l.id).sort((a, b) => a.from - b.from || a.depth - b.depth)]));
+    const legendAt = new Map();   // span → its legend row (flow right, left: a flow row; down, up: a row of the lane's list)
+    const slotRow = [];
+    if (!vertical) {
+      const starting = new Map();
+      for (const spans of spansOf.values()) {
+        const here = new Map();
+        for (const s of spans) if (s.title) { const k = here.get(s.from) ?? 0; legendAt.set(s, k); here.set(s.from, k + 1); }
+        for (const [slot, n] of here) starting.set(slot, Math.max(starting.get(slot) ?? 0, n));
+      }
+      // Rows of each lane's list, a subgrid of the flow's rows after the lane titles' row.
+      let line = 1;
+      for (let s = 0; s < rows; s++) {
+        for (const [span, k] of legendAt) if (span.from === s) legendAt.set(span, line + k);
+        line += starting.get(s) ?? 0;
+        slotRow[s] = line++;
+      }
+      flow.style.gridTemplateRows = `auto repeat(${line - 1}, auto)`;
     }
     const gutterEls = [];
     for (let k = 0; k <= N; k++) {
@@ -2499,6 +2661,7 @@ class Atlas extends EventTarget {
       sec.dataset.lane = lane.id;
       const track = reversed ? 2 * (N - 1 - k) + 2 : 2 * k + 2;
       const title = txt(this._heading(0), "lane-title", lane.id === M.UNASSIGNED ? this.labels.unassigned : (lane.title ?? ""));
+      title.dataset.key = `lane:${lane.id}`;
       const list = el("ol", "nodes");
       if (vertical) {
         sec.style.gridRow = `${track}`;
@@ -2516,22 +2679,60 @@ class Atlas extends EventTarget {
         list.style.gridRow = "2 / -1";
         list.style.gridTemplateRows = "subgrid";
       }
+      const spans = spansOf.get(lane.id);
+      let levels = 0;
+      if (vertical) {
+        // Nested legends go one row lower than the legends of the groups around them.
+        for (const s of spans.filter(x => x.title).sort((a, b) => a.depth - b.depth || a.from - b.from)) {
+          let r = 0;
+          for (const [o, row] of legendAt) if (spans.includes(o) && o.from <= s.to && s.from <= o.to) r = Math.max(r, row);
+          legendAt.set(s, r + 1);
+          levels = Math.max(levels, r + 1);
+        }
+        // The lane's rows are its legend rows and its node row; the title lines up with the nodes.
+        sec.style.gridTemplateRows = `repeat(${levels + 1}, auto)`;
+        sec.style.rowGap = "10px";
+        list.style.gridRow = "1 / -1";
+        list.style.gridTemplateRows = "subgrid";
+        title.style.gridRow = `${levels + 1}`;
+      }
+      const nodeRow = levels + 1;
       for (const id of L.order.get(lane.id)) {
         const li = this._item(id);
-        const slot = L.slots.get(id) + 1;
-        li.style.gridRow = vertical ? "" : `${slot}`;
-        li.style.gridColumn = vertical ? `${slot}` : "";
+        const slot = L.slots.get(id);
+        // Both tracks explicit: a group box takes the lane's cross track over its span, and an item with
+        // only its slot set was auto-placed past the box, into an extra column (or row).
+        li.style.gridRow = vertical ? `${nodeRow}` : `${slotRow[slot]}`;
+        li.style.gridColumn = vertical ? `${slot + 1}` : "1";
         list.append(li);
       }
-      // Group boxes, drawn behind the nodes of their slot span.
-      for (const span of L.groups.filter(s => s.lane === lane.id)) {
-        const box = el("div", "group-box");
-        const label = txt("span", "", span.title);
-        box.append(label);
-        if (vertical) { box.style.gridColumn = `${span.from + 1} / ${span.to + 2}`; box.style.gridRow = "1"; }
-        else { box.style.gridRow = `${span.from + 1} / ${span.to + 2}`; box.style.gridColumn = "1"; }
-        list.prepend(box);
+      // Group boxes, drawn behind the nodes of their slot span, from their legend's row when titled.
+      // Boxes and legends are list items (an <ol> holds only <li>s) hidden from assistive technology.
+      const deco = [];
+      for (const span of spans) {
+        const box = el("li", "group-box");
+        box.setAttribute("aria-hidden", "true");
+        box.dataset.group = span.group;
+        box.dataset.key = `box:${span.group}|${span.lane}`;
+        const inset = -6 + 4 * Math.min(span.depth, 3);   // nested boxes sit inside their parents
+        const top = span.title ? legendAt.get(span) : null;
+        // A titled box starts half a legend down, so its top edge runs through the legend.
+        box.style.margin = `${top !== null ? 8 : inset}px ${inset}px ${inset}px`;
+        if (vertical) { box.style.gridColumn = `${span.from + 1} / ${span.to + 2}`; box.style.gridRow = `${top ?? nodeRow} / ${nodeRow + 1}`; }
+        else { box.style.gridRow = `${top ?? slotRow[span.from]} / ${slotRow[span.to] + 1}`; box.style.gridColumn = "1"; }
+        deco.push(box);
+        if (top === null) continue;
+        const legend = el("li", "group-legend");
+        legend.setAttribute("aria-hidden", "true");
+        legend.dataset.group = span.group;
+        legend.dataset.key = `legend:${span.group}|${span.lane}`;
+        legend.append(txt("span", "", span.title));
+        legend.style.marginInlineStart = `${inset + 10}px`;
+        if (vertical) { legend.style.gridColumn = `${span.from + 1} / ${span.to + 2}`; legend.style.gridRow = `${top}`; }
+        else { legend.style.gridRow = `${top}`; legend.style.gridColumn = "1"; }
+        deco.push(legend);
       }
+      list.prepend(...deco);
       sec.append(title, list);
       this._lanes.push(sec);
       flow.append(sec);
@@ -2549,7 +2750,7 @@ class Atlas extends EventTarget {
       board.style.gridTemplateRows = parts.map(p => p.classList.contains("ch-ct") ? "var(--ct)" : p.classList.contains("ch-cb") ? "var(--cb)" : "auto").join(" ");
       board.style.gridTemplateColumns = "minmax(min-content, 1fr)";
     }
-    board.replaceChildren(this._svg, ...parts);
+    board.replaceChildren(this._svg, this._ghosts, ...parts);
 
     // Ports need room: a node is at least as long as its busiest side requires.
     for (const n of this._model.nodes) {
@@ -2612,6 +2813,22 @@ class Atlas extends EventTarget {
     const panel = this.options.panel === false ? "none" : mode === "stack" ? "inline" : width >= needed + side ? "side" : "below";
     if (this._wrap.dataset.mode !== mode) this._wrap.dataset.mode = mode;
     if (this._wrap.dataset.panel !== panel) this._wrap.dataset.panel = panel;
+  }
+
+  /** WebKit (Safari) keeps the rows of a grid of subgrids at their old heights when the board gets
+   *  narrower or wider (the side panel appearing, a window resize): the text wraps anew, the rows do
+   *  not follow, and nodes spill into the next row. Laying the flow out once as a block, then as a
+   *  grid again, sizes its rows anew; nothing is hidden, so focus and animations stay. Only when the
+   *  board's width changed. */
+  _refreshRows() {
+    const flow = this._flowEl;
+    if (!flow || !this._flowMode()) return;
+    const w = this._board.getBoundingClientRect().width;
+    if (Math.abs(w - (this._rowsWidth ?? w)) < 0.5) return;
+    this._rowsWidth = w;
+    flow.style.display = "block";
+    void flow.offsetHeight;
+    flow.style.display = "";
   }
 
   /** Narrowest the board can be laid out side by side, measured once per build: it depends on the
@@ -2782,123 +2999,226 @@ class Atlas extends EventTarget {
 
   _paint(animate) {
     if (this._destroyed) return;
-    this._svg.replaceChildren();
-    this._wires = [];
-    if (!this._layout || this._selected === null || !this._flowMode()) return;
-    const g = this._measure();
-    this._svg.setAttribute("viewBox", `0 0 ${g.W} ${g.H}`);
-    const edges = this._model.edges.filter(e => e.from !== e.to);
-    const merged = mergeParallel(edges);
-    const { wires } = route(this._selected, merged, g);
-    const L = this._layout;
-    const halos = svgEl("g"), lines = svgEl("g"), marks = svgEl("g");
-    this._svg.append(halos, lines, marks);
-    const motion = animate && !reducedMotion();
+    this._draw(this._route(), animate && !reducedMotion() ? "all" : null);
+  }
 
-    const pts = wires.map(w => w.points.map(g.fromFlow));
-    const lengths = pts.map(manhattan);
-    const order = [...new Set(wires.map(w => w.h))];
-    const top = h => Math.min(...wires.map((w, i) => (w.h === h ? Math.min(...pts[i].map(p => p.y)) : Infinity)));
+  /** Measures the board and routes the selected node's wires (reads only; null when no wire shows). */
+  _route() {
+    if (!this._layout || this._selected === null || !this._flowMode()) return null;
+    const g = this._measure();
+    const edges = this._model.edges.filter(e => e.from !== e.to);
+    const { wires } = route(this._selected, mergeParallel(edges), g);
+    const L = this._layout;
+    return {
+      W: g.W, H: g.H,
+      wires: wires.map(w => {
+        const screen = w.points.map(g.fromFlow);
+        const back = w.ids.some(id => L.edgeClass.get(id) === "backward");
+        return { ...w, screen, key: `${w.k}:${w.from}>${w.to}`, d: pathOf(screen), cls: `${w.k}${back ? " backward" : ""}` };
+      }),
+    };
+  }
+
+  /**
+   * Puts routed wires on screen. A wire already drawn with the same path and kind stays as it is
+   * (a wire being traced goes on tracing); the others are drawn anew, traced when `trace` is "all"
+   * or holds their key: bundle by bundle, at one speed, the inputs of a bundle timed to arrive together.
+   */
+  _draw(r, trace = null) {
+    this._painted = this._geometryKey(r?.W, r?.H);
+    const old = this._wireEls;
+    const next = new Map();
+    this._wires = r ? r.wires : [];
+    if (r) this._svg.setAttribute("viewBox", `0 0 ${r.W} ${r.H}`);
+    const fresh = [];
+    for (const w of r?.wires ?? []) {
+      const o = old.get(w.key);
+      if (o && o.d === w.d && o.cls === w.cls) { next.set(w.key, o); old.delete(w.key); }
+      else fresh.push(w);
+    }
+    for (const o of old.values()) for (const e of o.els) e.remove();
+    const traced = fresh.filter(w => trace === "all" || trace?.has(w.key));
+    const lengths = new Map(traced.map(w => [w, manhattan(w.screen)]));
+    const order = [...new Set(traced.map(w => w.h))];
+    const top = h => Math.min(...traced.filter(w => w.h === h).map(w => Math.min(...w.screen.map(p => p.y))));
     order.sort((a, b) => {
-      const ka = wires.find(w => w.h === a).k, kb = wires.find(w => w.h === b).k;
+      const ka = traced.find(w => w.h === a).k, kb = traced.find(w => w.h === b).k;
       return (ka === kb ? 0 : ka === "in" ? -1 : 1) || top(a) - top(b);
     });
     const turn = new Map(order.map((h, j) => [h, j * BUNDLE_STAGGER]));
-
-    wires.forEach((w, i) => {
-      const p = pts[i];
-      const back = w.ids.some(id => L.edgeClass.get(id) === "backward");
-      const d = pathOf(p);
-      const halo = svgEl("path", { d, class: "casing" + (motion ? " draw" : "") });
-      const line = svgEl("path", { d, class: `wire ${w.k}${back ? " backward" : ""}${motion ? " draw" : ""}` });
-      halos.append(halo);
-      lines.append(line);
-      const len = line.getTotalLength();
-      const dur = Math.max(0.2, len / SPEED);
-      const longest = Math.max(...wires.map((o, j) => (o.h === w.h ? lengths[j] : 0)));
-      const start = turn.get(w.h) + (w.k === "in" ? (longest - lengths[i]) / SPEED : 0);
-      const tip = p[p.length - 1], prev = lastDistinct(p);
-      const ux = (tip.x - prev.x) / (Math.hypot(tip.x - prev.x, tip.y - prev.y) || 1);
-      const uy = (tip.y - prev.y) / (Math.hypot(tip.x - prev.x, tip.y - prev.y) || 1);
-      const bx = tip.x - ux * ROUTE.arrow, by = tip.y - uy * ROUTE.arrow;
-      const arrow = svgEl("path", {
-        class: `arrow ${w.k}${motion ? " draw" : ""}`,
-        d: `M${f(tip.x)},${f(tip.y)} L${f(bx - uy * 4.2)},${f(by + ux * 4.2)} L${f(bx + uy * 4.2)},${f(by - ux * 4.2)}Z`,
-      });
+    for (const w of fresh) {
+      const motion = lengths.has(w);
+      const p = w.screen;
+      const halo = svgEl("path", { d: w.d, class: "casing" + (motion ? " draw" : "") });
+      const line = svgEl("path", { d: w.d, class: `wire ${w.cls}${motion ? " draw" : ""}` });
+      const arrow = svgEl("path", { class: `arrow ${w.k}${motion ? " draw" : ""}`, d: arrowOf(p) });
       const dot = svgEl("circle", { class: `dot ${w.k}${motion ? " draw" : ""}`, cx: f(p[0].x), cy: f(p[0].y), r: 3.2 });
-      marks.append(dot, arrow);
-      for (const e of [halo, line]) {
-        e.style.setProperty("--len", f(len));
-        e.style.setProperty("--t", `${dur.toFixed(3)}s`);
-        e.style.setProperty("--d", `${start.toFixed(3)}s`);
+      this._halos.append(halo);
+      this._lines.append(line);
+      this._marks.append(dot, arrow);
+      if (motion) {
+        const len = line.getTotalLength();
+        const dur = Math.max(0.2, len / SPEED);
+        const longest = Math.max(...traced.filter(o => o.h === w.h).map(o => lengths.get(o)));
+        const start = turn.get(w.h) + (w.k === "in" ? (longest - lengths.get(w)) / SPEED : 0);
+        for (const e of [halo, line]) {
+          e.style.setProperty("--len", f(len));
+          e.style.setProperty("--t", `${dur.toFixed(3)}s`);
+          e.style.setProperty("--d", `${start.toFixed(3)}s`);
+        }
+        dot.style.setProperty("--d", `${start.toFixed(3)}s`);
+        arrow.style.setProperty("--d", `${(start + dur - 0.04).toFixed(3)}s`);
       }
-      dot.style.setProperty("--d", `${start.toFixed(3)}s`);
-      arrow.style.setProperty("--d", `${(start + dur - 0.04).toFixed(3)}s`);
-      this._wires.push({ ...w, screen: p });
-    });
+      next.set(w.key, { d: w.d, cls: w.cls, screen: p, halo, line, arrow, dot, els: [halo, line, arrow, dot] });
+    }
+    this._wireEls = next;
   }
 
   // -------------------------------------------------------------------------------------------
-  // Transitions: remove → move → add, then the wires trace again.
+  // Transitions: exit → move → enter, then the wires that changed trace again.
 
-  _rects() {
-    const out = new Map();
-    for (const [id, b] of this._els) if (b.isConnected) out.set(id, b.getBoundingClientRect());
-    return out;
+  /** Where everything is on screen now, in flight or not. Reads only. */
+  _snapshot() {
+    const nodes = new Map();
+    for (const [id, b] of this._els) if (b.isConnected) nodes.set(id, { el: b, r: b.getBoundingClientRect() });
+    const decor = new Map();
+    for (const e of this._board.querySelectorAll("[data-key]")) decor.set(e.dataset.key, e.getBoundingClientRect());
+    return { nodes, decor, moving: this._moving() };
   }
 
-  _transition(first, diff, long) {
-    this._svg.replaceChildren();
-    const removed = diff ? diff.nodes.removed : [];
-    // A renamed node keeps its element, so it is not "new" on screen.
-    const added = new Set((diff ? diff.nodes.added : []).filter(id => !first.has(id)));
-    const B = this._board.getBoundingClientRect();
-    const anims = [];
-    const moveDur = long ? 900 : STAGES.move;
-    let t = 0;
-
-    // Ghosts of removed nodes fade out where they were.
-    if (removed.length) {
-      for (const id of removed) {
-        const r = first.get(id);
-        if (!r) continue;
-        const ghost = el("div", "node");
-        ghost.setAttribute("aria-hidden", "true");
-        Object.assign(ghost.style, { position: "absolute", left: `${r.left - B.left}px`, top: `${r.top - B.top}px`, width: `${r.width}px`, height: `${r.height}px`, zIndex: 3, margin: 0 });
-        this._board.append(ghost);
-        const a = ghost.animate([{ opacity: 1 }, { opacity: 0 }], { duration: STAGES.remove, easing: "ease-in", fill: "forwards" });
-        a.finished.then(() => ghost.remove(), () => ghost.remove());
-        anims.push(a);
-      }
-      t = STAGES.remove;
+  /** Stops the current edit's motion where it is (never at its end: the next one starts from there). */
+  _stopMotion(all) {
+    const running = [...this._animations, ...this._cues];
+    this._animations = [];
+    this._cues = [];
+    running.forEach(a => a.cancel());
+    if (all) {
+      this._ghostAnims.forEach(a => a.cancel());
+      this._ghostAnims = [];
+      this._ghosts.replaceChildren();
     }
+  }
 
-    // Nodes that stay glide from where they were (FLIP).
-    let moved = 0;
-    for (const [id, b] of this._els) {
-      if (added.has(id) || !first.has(id)) continue;
-      const a = first.get(id), z = b.getBoundingClientRect();
+  _transition(first, diff, mode) {
+    // Read everything, then write: a read after a write makes the browser lay the page out again,
+    // and once per node that is hundreds of milliseconds on a large board.
+    const board = this._board;
+    const B = board.getBoundingClientRect();
+    const ox = B.left + board.clientLeft, oy = B.top + board.clientTop;
+    const now = new Map();
+    for (const [id, b] of this._els) now.set(id, b.getBoundingClientRect());
+    const decor = [...board.querySelectorAll("[data-key]")].map(e => [e, e.getBoundingClientRect()]);
+    const r = this._route();
+    const focus = mode === "reduce" ? getComputedStyle(this._wrap).getPropertyValue("--focus").trim() : "";
+
+    const added = [...now.keys()].filter(id => !first.nodes.has(id));
+    const removed = [...first.nodes.keys()].filter(id => !now.has(id));
+    const moves = [];
+    for (const [id, z] of now) {
+      const a = first.nodes.get(id)?.r;
+      if (!a) continue;
       const dx = a.left - z.left, dy = a.top - z.top;
-      if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5) continue;
-      const delay = t + Math.min(moved * STAGES.stagger, STAGES.staggerCap);
-      moved++;
-      anims.push(b.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "none" }],
-        { duration: moveDur, delay, easing: "cubic-bezier(.4,0,.2,1)", fill: "backwards" }));
+      if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) moves.push({ id, dx, dy });
     }
-    if (moved) t += moveDur + Math.min(moved * STAGES.stagger, STAGES.staggerCap);
 
-    // New nodes come in last.
-    for (const id of added) {
-      const b = this._els.get(id);
-      if (!b) continue;
-      anims.push(b.animate([{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }],
-        { duration: STAGES.add, delay: t, easing: "ease-out", fill: "backwards" }));
+    if (mode === "reduce") {
+      // Nothing travels: the nodes that moved or changed show an outline that fades, new nodes fade
+      // in, and the wires are drawn at once.
+      this._draw(r, null);
+      const changed = new Set([...moves.map(m => m.id), ...(diff?.nodes.changed ?? [])].filter(id => this._els.has(id)));
+      const cue = [{ outline: `2px solid ${focus || "currentColor"}`, outlineOffset: "2px" }, { outline: "2px solid transparent", outlineOffset: "2px" }];
+      for (const id of changed) this._cues.push(this._els.get(id).animate(cue, { duration: MOTION.cue, easing: "ease-out" }));
+      for (const id of added) this._cues.push(this._els.get(id).animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: "ease-out" }));
+      return;
     }
-    if (added.size) t += STAGES.add;
+
+    const plan = planMove(moves, this._layout.direction);
+    const decorMoves = [], decorNew = [];
+    for (const [e, z] of decor) {
+      const a = first.decor.get(e.dataset.key);
+      if (!a) { decorNew.push(e); continue; }
+      const dx = a.left - z.left, dy = a.top - z.top;
+      if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) decorMoves.push({ e, dx, dy });
+    }
+    // Titles and boxes keep the timing of the nodes; alone, they take the time their own travel needs.
+    const moveMs = plan.ms || (decorMoves.length ? planMove(decorMoves.map(m => ({ id: "", dx: m.dx, dy: m.dy })), this._layout.direction).ms : 0);
+
+    // The wires: unchanged ones stay, ones that keep their shape reshape with the nodes, the rest fade
+    // out and trace again at the end. Wires already reshaping when this edit came all fade.
+    const old = this._wireEls;
+    const morph = MORPH && !plan.split && !first.moving && moveMs > 0;
+    const reshape = [], fade = [], trace = new Set();
+    const seen = new Set();
+    for (const w of r?.wires ?? []) {
+      const o = old.get(w.key);
+      seen.add(w.key);
+      if (o && o.d === w.d && o.cls === w.cls) continue;
+      if (o && morph && o.cls === w.cls && sameShape(o.screen, w.screen)) { reshape.push([o, w]); continue; }
+      if (o) fade.push(o);
+      trace.add(w.key);
+    }
+    for (const [key, o] of old) if (!seen.has(key)) fade.push(o);
+
+    const anims = [];
+    let t = 0;
+    // Exit: ghosts of removed nodes (copies, so they look like what left) and wires that go.
+    for (const id of removed) {
+      const { el: b, r: a } = first.nodes.get(id);
+      const g = b.cloneNode(true);
+      g.removeAttribute("tabindex");
+      g.removeAttribute("aria-pressed");
+      g.inert = true;
+      Object.assign(g.style, { position: "absolute", left: `${a.left - ox}px`, top: `${a.top - oy}px`, width: `${a.width}px`, height: `${a.height}px`, minWidth: "0", minHeight: "0", margin: "0" });
+      this._ghosts.append(g);
+      const ga = g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: MOTION.exit, easing: MOTION.exitEase, fill: "forwards" });
+      ga.finished.then(() => g.remove(), () => g.remove());
+      this._ghostAnims.push(ga);
+    }
+    for (const o of fade) for (const e of o.els) anims.push(e.animate([{ opacity: 1 }, { opacity: 0 }], { duration: MOTION.exit, easing: MOTION.exitEase, fill: "forwards" }));
+    if (removed.length || fade.length) t = MOTION.exit;
+
+    // Move: every node, title and box from where it was seen, all at once (or along the flow, then
+    // across it), for as long as the longest travel needs.
+    const offset = (dx, dy) => `translate(${dx}px, ${dy}px)`;
+    const frames = (dx, dy, mid) => mid
+      ? [{ transform: offset(dx, dy), easing: MOTION.ease }, { transform: offset(mid[0], mid[1]), offset: plan.f, easing: MOTION.ease }, { transform: "none" }]
+      : [{ transform: offset(dx, dy) }, { transform: "none" }];
+    const timing = { duration: moveMs, delay: t, easing: plan.split ? "linear" : MOTION.ease, fill: "backwards" };
+    const vertical = this._layout.direction === "down" || this._layout.direction === "up";
+    for (const m of plan.moves) anims.push(this._els.get(m.id).animate(frames(m.dx, m.dy, m.mid), timing));
+    for (const m of decorMoves) anims.push(m.e.animate(frames(m.dx, m.dy, plan.split ? (vertical ? [m.dx, 0] : [0, m.dy]) : null), timing));
+    for (const [o, w] of reshape) {
+      for (const e of [o.halo, o.line]) { e.setAttribute("d", w.d); anims.push(e.animate([{ d: `path("${o.d}")` }, { d: `path("${w.d}")` }], timing)); }
+      const ad = arrowOf(w.screen);
+      anims.push(o.arrow.animate([{ d: `path("${o.arrow.getAttribute("d")}")` }, { d: `path("${ad}")` }], timing));
+      o.arrow.setAttribute("d", ad);
+      const p0 = o.screen[0], p1 = w.screen[0];
+      o.dot.setAttribute("cx", f(p1.x));
+      o.dot.setAttribute("cy", f(p1.y));
+      anims.push(o.dot.animate([{ transform: offset(p0.x - p1.x, p0.y - p1.y) }, { transform: "none" }], timing));
+      o.d = w.d;
+      o.screen = w.screen;
+    }
+    if (moveMs && (plan.moves.length || decorMoves.length)) t += moveMs;
+
+    // Enter: new nodes, titles and boxes.
+    const enter = { duration: MOTION.enter, delay: t, easing: MOTION.enterEase, fill: "backwards" };
+    for (const id of added) anims.push(this._els.get(id).animate([{ opacity: 0, transform: "translateY(4px)" }, { opacity: 1, transform: "none" }], enter));
+    for (const e of decorNew) anims.push(e.animate([{ opacity: 0 }, { opacity: 1 }], enter));
 
     this._animations = anims;
-    const done = () => { if (this._animations === anims) { this._animations = []; this._paint(this.options.animate); } };
-    if (!anims.length) { this._paint(this.options.animate); return; }
+    const done = () => {
+      if (this._animations !== anims) return;   // stopped, settled or replaced by another edit
+      this._animations = [];
+      const after = this._after;
+      this._after = null;
+      if (after) { this._paint(after.animate); return; }
+      // The board may have changed size while the nodes moved: then route again.
+      const { width, height } = this._board.getBoundingClientRect();
+      const same = r && Math.round(width) === Math.round(r.W) && Math.round(height) === Math.round(r.H);
+      this._draw(same || !r ? r : this._route(), same ? trace : "all");
+    };
+    if (!anims.length) { done(); return; }
     Promise.allSettled(anims.map(a => a.finished)).then(done);
   }
 
@@ -3068,16 +3388,26 @@ function pathOf(points) {
   const cut = Math.min(ROUTE.arrow - 1, len - 1);
   p[n - 1] = { x: u.x - (u.x - v.x) / len * cut, y: u.y - (u.y - v.y) / len * cut };
   let d = `M${f(p[0].x)},${f(p[0].y)}`;
+  // Every bend writes the same commands, even a bend of zero length, so two paths of the same shape
+  // have the same command list and the browser can animate one into the other.
   for (let i = 1; i < n - 1; i++) {
     const a = p[i - 1], b = p[i], c = p[i + 1];
     const l0 = Math.hypot(b.x - a.x, b.y - a.y), l1 = Math.hypot(c.x - b.x, c.y - b.y);
-    if (!l0 || !l1) continue;
-    const r = Math.min(ROUTE.radius, l0 / 2, l1 / 2);
-    const x0 = b.x - (b.x - a.x) / l0 * r, y0 = b.y - (b.y - a.y) / l0 * r;
-    const x1 = b.x + (c.x - b.x) / l1 * r, y1 = b.y + (c.y - b.y) / l1 * r;
+    const r = l0 && l1 ? Math.min(ROUTE.radius, l0 / 2, l1 / 2) : 0;
+    const x0 = l0 ? b.x - (b.x - a.x) / l0 * r : b.x, y0 = l0 ? b.y - (b.y - a.y) / l0 * r : b.y;
+    const x1 = l1 ? b.x + (c.x - b.x) / l1 * r : b.x, y1 = l1 ? b.y + (c.y - b.y) / l1 * r : b.y;
     d += ` L${f(x0)},${f(y0)} Q${f(b.x)},${f(b.y)} ${f(x1)},${f(y1)}`;
   }
   return d + ` L${f(p[n - 1].x)},${f(p[n - 1].y)}`;
+}
+
+/** The arrowhead at the end of a wire. */
+function arrowOf(p) {
+  const tip = p[p.length - 1], prev = lastDistinct(p);
+  const len = Math.hypot(tip.x - prev.x, tip.y - prev.y) || 1;
+  const ux = (tip.x - prev.x) / len, uy = (tip.y - prev.y) / len;
+  const bx = tip.x - ux * ROUTE.arrow, by = tip.y - uy * ROUTE.arrow;
+  return `M${f(tip.x)},${f(tip.y)} L${f(bx - uy * 4.2)},${f(by + ux * 4.2)} L${f(bx + uy * 4.2)},${f(by - ux * 4.2)}Z`;
 }
 
 function lastDistinct(p) {
