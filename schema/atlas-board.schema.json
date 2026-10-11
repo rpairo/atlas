@@ -142,6 +142,12 @@
           },
           "pinned": {
             "type": "boolean"
+          },
+          "layer": {
+            "description": "The node's column on a board without flow lanes, saved by Atlas so that edits keep the drawing stable. Only the order of the numbers matters; ignored in bands and on boards with flow lanes.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 300
           }
         }
       }
