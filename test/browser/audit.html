@@ -30,6 +30,8 @@ try {
   }
   // offset=N: the map starts N px down the page (a header above it, as on most sites).
   if (q.get("offset")) document.querySelector("main").style.paddingTop = `${Number(q.get("offset"))}px`;
+  // bars=1: classic scroll bars that take room (as on Windows), wherever the audit runs.
+  if (q.get("bars")) { const st = document.createElement("style"); st.textContent = "::-webkit-scrollbar { width: 17px; height: 17px; } ::-webkit-scrollbar-thumb { background: #999; }"; document.head.append(st); }
   // theme=dark or theme=light: a forced theme, whatever the system's.
   if (q.get("theme")) host.setAttribute("theme", q.get("theme"));
   const map = new Atlas(host, { document: text, animate: false });
@@ -666,7 +668,9 @@ try {
     const fresh = (opts = {}) => { hostM.replaceChildren(); const h = document.createElement("div"); hostM.append(h); return new Atlas(h, { document: text, animate: true, ...opts }); };
     const anims = m => [...m._animations];
     const at = (m, ms) => { for (const a of anims(m)) { a.pause(); a.currentTime = ms; } };
-    const box = (m, id) => { const r = m._els.get(id).getBoundingClientRect(); return { x: r.left, y: r.top }; };
+    // Positions inside the map (a scroll of the whole page, or a page scroll bar coming or going,
+    // moves the map as one: that is not a node jumping).
+    const box = (m, id) => { const r = m._els.get(id).getBoundingClientRect(), h = m.host.getBoundingClientRect(); return { x: r.left - h.left, y: r.top - h.top }; };
     const frames = () => new Promise(r => setTimeout(r, 120));
     // An edit that moves every node: a new first lane (or, in automatic lanes, a new source in front).
     const shove = m => {
@@ -690,9 +694,9 @@ try {
       at(m, mid);
       const seen = new Map([...m._els].map(([id]) => [id, box(m, id)]));
       m.undo();
-      let jump = 0;
-      for (const [id, p] of seen) if (m._els.has(id)) { const q = box(m, id); jump = Math.max(jump, Math.hypot(q.x - p.x, q.y - p.y)); }
-      if (jump > 1) res.motion.push(`an edit during a move made nodes jump ${jump.toFixed(1)}px`);
+      let jump = 0, who = "";
+      for (const [id, p] of seen) if (m._els.has(id)) { const q = box(m, id), d = Math.hypot(q.x - p.x, q.y - p.y); if (d > jump) { jump = d; who = `${id} by ${(q.x - p.x).toFixed(1)},${(q.y - p.y).toFixed(1)}`; } }
+      if (jump > 1) res.motion.push(`an edit during a move made nodes jump ${jump.toFixed(1)}px (${who}; page scrolled ${scrollY | 0}, ${document.documentElement.scrollHeight} tall)`);
       m.settle();
       // A selection made while nodes move waits for them before its wires are measured.
       const someone = ids.find(x => model.edges.some(e => e.from === x || e.to === x));
