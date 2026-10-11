@@ -693,10 +693,12 @@ try {
       const mid = Math.max(...anims(m).map(a => (a.effect.getTiming().delay ?? 0) + 120));
       at(m, mid);
       const seen = new Map([...m._els].map(([id]) => [id, box(m, id)]));
+      const ctx = () => { const b = m._board.getBoundingClientRect(), h = m.host.getBoundingClientRect(); return `board ${(b.left - h.left).toFixed(1)},${(b.top - h.top).toFixed(1)} ${b.width.toFixed(1)}x${b.height.toFixed(1)}, scrollLeft ${m._boardWrap.scrollLeft}, ${m._wrap.dataset.mode}/${m._wrap.dataset.panel}`; };
+      const ctx0 = ctx();
       m.undo();
-      let jump = 0, who = "";
-      for (const [id, p] of seen) if (m._els.has(id)) { const q = box(m, id), d = Math.hypot(q.x - p.x, q.y - p.y); if (d > jump) { jump = d; who = `${id} by ${(q.x - p.x).toFixed(1)},${(q.y - p.y).toFixed(1)}`; } }
-      if (jump > 1) res.motion.push(`an edit during a move made nodes jump ${jump.toFixed(1)}px (${who}; page scrolled ${scrollY | 0}, ${document.documentElement.scrollHeight} tall)`);
+      let jump = 0, who = "", count = 0;
+      for (const [id, p] of seen) if (m._els.has(id)) { const q = box(m, id), d = Math.hypot(q.x - p.x, q.y - p.y); if (d > 1) count++; if (d > jump) { jump = d; who = `${id} by ${(q.x - p.x).toFixed(1)},${(q.y - p.y).toFixed(1)}`; } }
+      if (jump > 1) res.motion.push(`an edit during a move made ${count} nodes jump, up to ${jump.toFixed(1)}px (${who}; before: ${ctx0}; after: ${ctx()}; ${m._animations.length} animations, ${m._animations.filter(a => a.effect?.target?.dataset?.key).length} on titles)`);
       m.settle();
       // A selection made while nodes move waits for them before its wires are measured.
       const someone = ids.find(x => model.edges.some(e => e.from === x || e.to === x));
