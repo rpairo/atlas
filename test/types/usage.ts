@@ -10,7 +10,7 @@ import {
 } from "@rpairo/atlas";
 import type {
   Board, Model, Node, Edge, Constraint, Operation, OperationName, Finding, Diff, SavedBoard,
-  ChangeDetail, Suggestion, Batch, Layout, RouteResult,
+  ChangeDetail, ErrorDetail, Suggestion, Batch, Layout, RouteResult,
 } from "@rpairo/atlas";
 
 const board: Board = {
@@ -217,6 +217,9 @@ element.addEventListener("atlas-select", e => { const id: string | null = e.deta
 element.addEventListener("atlas-error", e => { const errors: Finding[] = e.detail.errors; });
 host.addEventListener("atlas-change", e => e.detail.diff?.nodes.changed);
 const attributes: string[] = AtlasMap.observedAttributes;
+const whenReady: Promise<Atlas> = element.ready;
+const failure: ErrorDetail | null = element.error;
+const gone: boolean = map.destroyed;
 
 // The experimental internals.
 const placement: Layout = layout(loaded.model, { optimize: true });

@@ -561,8 +561,10 @@ export declare class Atlas extends EventTarget {
   select(id: string | null, options?: { focus?: boolean; animate?: boolean }): void;
   /** Finishes any running transition at once and redraws the wires. */
   settle(): void;
-  /** Stops observing and empties `root`. */
+  /** Stops observing and empties `root`. Final: a destroyed instance draws nothing more. */
   destroy(): void;
+  /** Whether `destroy()` ran. */
+  readonly destroyed: boolean;
 
   addEventListener<K extends keyof AtlasEventMap>(type: K, listener: (this: Atlas, event: AtlasEventMap[K]) => void, options?: boolean | AddEventListenerOptions): void;
   addEventListener(type: string, listener: EventListenerOrEventListenerObject | null, options?: boolean | AddEventListenerOptions): void;
@@ -580,8 +582,12 @@ export declare class Atlas extends EventTarget {
  * `atlas-error`, all bubbling and composed.
  */
 export declare class AtlasMap extends HTMLElement {
-  /** The instance, created when the element is first connected. */
+  /** The instance, created when the element is first connected (again after `atlas.destroy()`). */
   atlas?: Atlas;
+  /** Settles with the instance once the current board is on screen; rejects with `{ errors }`. */
+  readonly ready: Promise<Atlas>;
+  /** The last failure to load, or null once a board is on screen. */
+  error: ErrorDetail | null;
   static readonly observedAttributes: string[];
   connectedCallback(): void;
   attributeChangedCallback(name: string, old: string | null, value: string | null): void;

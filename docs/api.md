@@ -89,7 +89,7 @@ step, animates the change and fires `change`. Editing methods return the new rev
 | `select(id, { focus, animate })` | Selects a node (or clears the selection with `null`), draws its wires and fills the panel. `focus` (default `true`) moves keyboard focus to it. |
 | `setState(id, { subtitle, status })` | Live content that never moves anything: replaces the subtitle shown (not the one in the board) and sets a status. `status` must match `[a-z0-9_-]{1,32}` and becomes the CSS part `status-<value>`. `null` clears either. |
 | `settle()` | Finishes running transitions at once and redraws the wires. Useful before measuring or taking a screenshot. |
-| `destroy()` | Stops observing, cancels animations and empties the element. |
+| `destroy()` | Stops observing, cancels animations and empties the element. Final: `destroyed` turns true and the instance draws nothing more. |
 
 ### Custom node content
 
@@ -138,9 +138,20 @@ const el = document.querySelector("atlas-map");
 el.atlas.addNode({ id: "cache", title: "Cache", lane: "services" });
 ```
 
+`el.ready` is a promise for the board on its way: it settles with the engine once the board is on
+screen, or rejects with `{ errors }`. `el.error` keeps the last failure (null once a board is on
+screen). Both work whenever your code runs, even after the events fired:
+
+```js
+el.ready.then(map => map.select("api"), ({ errors }) => console.error(errors));
+```
+
+When `src` changes before the previous board arrived, only the latest one is shown.
+
 `define(name)` registers the element under another name (`define("my-map")`). Both builds call
 `define()` with the default name when `customElements` exists. Removing the element from the page
-does not destroy its engine; call `el.atlas.destroy()` when you are done with it.
+does not destroy its engine; call `el.atlas.destroy()` when you are done with it. A destroyed
+element that is inserted again gets a new engine and loads its board again.
 
 ## Events
 

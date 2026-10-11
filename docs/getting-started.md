@@ -111,6 +111,10 @@ is loaded, in the `<head>` or after the element):
 document.querySelector("atlas-map").addEventListener("atlas-error", e => console.error(e.detail.errors));
 ```
 
+The events fire once your code had the chance to listen. If it may run later, ask the element:
+`el.ready` settles when the board is on screen (or rejects with the same `{ errors }`), and
+`el.error` keeps the last failure.
+
 ## Edit it from JavaScript
 
 The element's engine is `element.atlas`. You can also create the engine yourself on any element:

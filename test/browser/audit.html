@@ -249,6 +249,40 @@ try {
   await new Promise(r => setTimeout(r, 1500));
   if (rejections.length) res.behaviour.push(`destroy() during a transition: ${rejections[0]}`);
   host2.remove();
+  // <atlas-map>: an inline board's events come after the code that inserted it could listen, the
+  // latest src wins over a slower earlier one, ready and error tell the outcome, and a destroyed
+  // element comes back when it is inserted again.
+  try {
+    const bad = document.createElement("atlas-map");
+    bad.innerHTML = '<script type="application/json">{"nodes":[{"id":"a","lane":"nope"}]}<\/script>';
+    document.body.append(bad);
+    let heard = null;
+    bad.addEventListener("atlas-error", e => { heard = e.detail; });
+    const outcome = await bad.ready.then(() => "loaded", () => "failed");
+    if (outcome !== "failed") res.behaviour.push("ready resolved for an invalid inline board");
+    if (!heard) res.behaviour.push("an inline board's atlas-error fired before the page could listen");
+    if (!bad.error?.errors?.length) res.behaviour.push("element.error is empty after a failed load");
+    bad.remove();
+    const realFetch = window.fetch;
+    window.fetch = (url, opts) => String(url).includes("slow=1")
+      ? new Promise(r => setTimeout(r, 300)).then(() => realFetch(url, opts)) : realFetch(url, opts);
+    const raced = document.createElement("atlas-map");
+    document.body.append(raced);
+    raced.setAttribute("src", "../../examples/incident-response/board.json?slow=1");
+    raced.setAttribute("src", "../../examples/state-machine/board.json");
+    await raced.ready;
+    await new Promise(r => setTimeout(r, 600));
+    window.fetch = realFetch;
+    const shown = raced.atlas.toJSON().nodes.map(n => n.id);
+    const want = (await (await fetch("../../examples/state-machine/board.json")).json()).nodes.map(n => n.id);
+    if (shown.sort().join() !== want.sort().join()) res.behaviour.push("<atlas-map> shows an older src that answered later");
+    raced.atlas.destroy();
+    raced.remove();
+    document.body.append(raced);
+    await new Promise(r => setTimeout(r, 300));
+    if (raced.atlas.destroyed || !raced.shadowRoot.querySelector(".node")) res.behaviour.push("a destroyed <atlas-map> stays empty when inserted again");
+    raced.remove();
+  } catch (e) { res.behaviour.push(`element check threw ${e.name}: ${e.message}`); }
   out(res);
 } catch (e) {
   out({ error: String(e && e.stack || e) });
