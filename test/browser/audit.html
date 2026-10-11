@@ -213,6 +213,42 @@ try {
   if (dry !== done) res.behaviour.push(`reorderAll counted ${dry} in a dry run and ${done} for real`);
   if ((done === 0) !== (map.rev === revBefore)) res.behaviour.push("reorderAll changed the revision without changing the order, or the reverse");
   if (done) map.undo();
+  // State follows the board: the selection after renaming, removing or replacing what is selected,
+  // live state of a removed node, edits that change nothing, and a transition cut by destroy().
+  const sel = [];
+  map.addEventListener("select", e => sel.push(e.detail.id));
+  const q0 = live[2] ?? live[0];
+  try {
+    map.select(q0, { focus: false, animate: false });
+    map.renameNode(q0, "audit_sel");
+    if (map.selected !== "audit_sel") res.behaviour.push(`the selection did not follow a rename (${map.selected})`);
+    map.undo();
+    if (map.selected !== null || sel.at(-1) !== null) res.behaviour.push("undo of a rename left a stale selection or said nothing");
+    map.select(q0, { focus: false, animate: false });
+    map.setState(q0, { status: "alarm" });
+    const back = map.node(q0);
+    map.removeNode(q0);
+    if (map.selected !== null || sel.at(-1) !== null) res.behaviour.push("removing the selected node left it selected or said nothing");
+    map.addNode(back);
+    if ((map._els.get(q0)?.getAttribute("part") ?? "").includes("status-")) res.behaviour.push("a node added again kept the live state of the removed one");
+    map.undo(); map.undo();
+    const rev0 = map.rev;
+    map.apply([]); map.setMeta({}); map.updateNode(live[0], { title: map.node(live[0]).title });
+    if (map.rev !== rev0) res.behaviour.push(`edits that change nothing made ${map.rev - rev0} undo steps`);
+    map.select(q0, { focus: false, animate: false });
+    map.load(JSON.stringify({ meta: { selected: "solo" }, nodes: [{ id: "solo", title: "Solo" }] }), { selected: null });
+    if (map.selected !== null) res.behaviour.push(`load with { selected: null } selected ${map.selected}`);
+  } catch (e) { res.behaviour.push(`state check threw ${e.name}: ${e.message}`); }
+  const rejections = [];
+  addEventListener("unhandledrejection", e => rejections.push(String(e.reason?.message ?? e.reason)));
+  const host2 = document.createElement("div");
+  document.body.append(host2);
+  const m2 = new Atlas(host2, { document: text, animate: true });
+  m2.addNode({ id: "audit_late", title: "Late" }, { edges: [{ from: ids[1], to: "audit_late" }] });
+  m2.destroy();
+  await new Promise(r => setTimeout(r, 1500));
+  if (rejections.length) res.behaviour.push(`destroy() during a transition: ${rejections[0]}`);
+  host2.remove();
   out(res);
 } catch (e) {
   out({ error: String(e && e.stack || e) });
