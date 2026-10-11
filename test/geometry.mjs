@@ -58,8 +58,10 @@ export function geometry(model, { vertical = false } = {}) {
 
   const boxes = new Map();
   L.flow.forEach((lane, k) => L.order.get(lane.id).forEach(id => {
+    // A node fills its row, as in the renderer (grid items stretch): a row made taller by the ports
+    // of its busiest node gives every node in it that height, and those ports their room.
     const v0 = flowV + L.slots.get(id) * rowV;
-    boxes.set(id, { l: colU[k], r: colU[k] + nodeU, t: v0, b: v0 + nodeV - GAP });
+    boxes.set(id, { l: colU[k], r: colU[k] + nodeU, t: v0, b: v0 + rowV - GAP });
   }));
   for (const [band, v0] of [[L.before, topV], [L.after, botV]]) {
     if (!band) continue;

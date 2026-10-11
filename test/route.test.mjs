@@ -54,3 +54,19 @@ test("a hub with dozens of wires routes in well under a second, not minutes (sea
   assert.equal(r.wires.length, 36);
   assert.ok(ms < 5000, `route() took ${Math.round(ms)} ms`);
 });
+
+test("long lists (the ports of a hub) are searched too: fewer crossings where every order cannot be tried", () => {
+  // Eight lanes, the hub in the last one, linked both ways to the first and last node of every
+  // other lane: 28 wires on one side. Before the long lists were searched this gave 300 crossings.
+  const lanes = 8, hubCol = 7;
+  const L = Array.from({ length: lanes }, (_, i) => ({ id: "l" + i }));
+  const N = [], E = [];
+  for (let i = 0; i < lanes; i++) for (let k = 0; k < 6; k++) N.push({ id: `n${i}_${k}`, lane: "l" + i });
+  N.push({ id: "hub", lane: "l" + hubCol });
+  for (let i = 0; i < lanes; i++) if (i !== hubCol) {
+    E.push({ from: "hub", to: `n${i}_0` }, { from: `n${i}_5`, to: "hub" }, { from: "hub", to: `n${i}_5` }, { from: `n${i}_0`, to: "hub" });
+  }
+  const { model } = load({ meta: { ordered: true }, lanes: L, nodes: N, edges: E });
+  const g = geometry(model);
+  assert.ok(route("hub", g.edges, g).crossings <= 248);
+});

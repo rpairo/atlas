@@ -20,8 +20,8 @@ it. Plain HTML, CSS and JavaScript: no framework, no build step, and no network 
   a lane.
 - **Wires that never cross a node.** Orthogonal routing through free corridors, bundles that
   branch like a wiring diagram, crossings minimised by search.
-- **Stable editing.** Adding a node never swaps two existing ones. Every edit is one undoable
-  step, and undo restores the exact document.
+- **Stable editing.** Adding a node never swaps two existing ones in a lane. Every edit is one
+  undoable step, and undo restores the exact document.
 - **Accessible and themable.** The DOM is the accessible version of the map, the keyboard reaches
   everything, `prefers-reduced-motion` is honoured and every colour is a CSS variable.
 
@@ -32,8 +32,8 @@ Atlas is two single files with everything inside, styles included. Pick one way:
 | How | What to use |
 |---|---|
 | Download | `atlas.js` (ES module) or `atlas.global.js` (classic script) from the [latest release](https://github.com/rpairo/atlas/releases/latest) |
-| CDN | `https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.3.1/dist/atlas.js` (always with an exact version) |
-| npm, from GitHub | `npm install github:rpairo/atlas#v0.3.1`, then `import { Atlas } from "@rpairo/atlas"` |
+| CDN | `https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.3.2/dist/atlas.js` (always with an exact version) |
+| npm, from GitHub | `npm install github:rpairo/atlas#v0.3.2`, then `import { Atlas } from "@rpairo/atlas"` |
 | Copy | `dist/atlas.js` or `dist/atlas.global.js` from this repository |
 
 Atlas is not published to the npm registry. Every release lists the
@@ -43,7 +43,7 @@ hashes of its files; [Getting started](docs/getting-started.md#pin-a-version) sh
 ## Quick start
 
 ```html
-<script type="module" src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.3.1/dist/atlas.js"></script>
+<script type="module" src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.3.2/dist/atlas.js"></script>
 
 <atlas-map>
   <script type="application/json">

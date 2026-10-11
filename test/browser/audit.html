@@ -347,6 +347,30 @@ try {
     if (after5 !== before5) res.behaviour.push(`addNode moved existing nodes: ${before5} -> ${m5._layout.order.get("L").join(",")}`);
     m5.destroy(); host5.remove();
   } catch (e) { res.behaviour.push(`addNode check threw ${e.name}: ${e.message}`); }
+  // Without flow lanes the lanes come from the edges, so a new node may move others to another lane,
+  // but inside a lane the order of the nodes that stay is kept.
+  try {
+    const host7 = document.createElement("div"); host7.style.width = "1300px"; document.body.append(host7);
+    const m7 = new Atlas(host7, { animate: false });
+    let sd = 11; const rnd = () => ((sd = (sd * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+    let swapped = 0;
+    for (let t = 0; t < 60; t++) {
+      const n = 5 + Math.floor(rnd() * 12);
+      const nodes = Array.from({ length: n }, (_, i) => ({ id: "n" + i }));
+      const edges = []; for (let k = 0; k < n * 1.3; k++) { const a = Math.floor(rnd() * n), c = Math.floor(rnd() * n); if (a !== c) edges.push({ from: "n" + a, to: "n" + c }); }
+      m7.load({ nodes, edges });
+      const before = [...m7._layout.order].map(([l, ids]) => [l, [...ids]]);
+      const o = "n" + Math.floor(rnd() * n);
+      m7.addNode({ id: "x" }, { edges: [rnd() < 0.5 ? { from: o, to: "x" } : { from: "x", to: o }] });
+      const at = new Map(); for (const [l, ids] of m7._layout.order) ids.forEach((id, i) => at.set(id, [l, i]));
+      for (const [l, ids] of before) for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+        const A = at.get(ids[i]), B = at.get(ids[j]);
+        if (A[0] === l && B[0] === l && A[1] > B[1]) swapped++;
+      }
+    }
+    if (swapped) res.behaviour.push(`without lanes, adding a node swapped ${swapped} pairs inside their lane`);
+    m7.destroy(); host7.remove();
+  } catch (e) { res.behaviour.push(`automatic lanes check threw ${e.name}: ${e.message}`); }
   // <atlas-map>: an inline board's events come after the code that inserted it could listen, the
   // latest src wins over a slower earlier one, ready and error tell the outcome, and a destroyed
   // element comes back when it is inserted again.
