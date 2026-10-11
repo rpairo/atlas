@@ -48,6 +48,8 @@ A second review: the browser audit now also runs in Firefox and WebKit, and prop
 
 - `scripts/audit-browsers.mjs`: the browser audit in Firefox and WebKit through Playwright; CI runs
   it on every pull request.
+- `headingLevel` option. Lane titles and the detail's title were always `h3`, which skipped a level
+  under a page's `h1` (axe-core `heading-order`); they are `h2` by default, the relations one below.
 
 ## [0.3.0] - 2026-10-11
 

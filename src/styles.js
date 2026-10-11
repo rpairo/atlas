@@ -138,15 +138,15 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .atlas[data-panel="side"] .panel { position: sticky; top: 16px; }
 .atlas[data-panel="below"] .panel { position: sticky; bottom: 12px; max-height: 42vh; overflow: auto; box-shadow: 0 12px 32px -8px var(--shadow); }
 .panel .p-lane { margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2); }
-.panel h3 { margin: 0; font-size: 1.4rem; line-height: 1.2; text-wrap: balance; overflow-wrap: anywhere; }
+.panel .p-title { margin: 0; font-size: 1.4rem; line-height: 1.2; text-wrap: balance; overflow-wrap: anywhere; }
 .panel .p-sub { margin: 0; font: 12.5px/1.4 var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
 .panel li { overflow-wrap: anywhere; }
 .panel ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; list-style: disc; } /* inline, the panel sits in a lane's list */
 .rel { display: grid; gap: 6px; }
-.rel h4 { margin: 4px 0 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; display: flex; align-items: center; gap: 8px; }
-.rel h4::before { content: ""; width: 16px; height: 2px; }
-.rel[data-dir="in"] h4 { color: var(--in); } .rel[data-dir="in"] h4::before { background: var(--in); }
-.rel[data-dir="out"] h4 { color: var(--out); } .rel[data-dir="out"] h4::before { background: var(--out); }
+.rel .r-title { margin: 4px 0 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; display: flex; align-items: center; gap: 8px; }
+.rel .r-title::before { content: ""; width: 16px; height: 2px; }
+.rel[data-dir="in"] .r-title { color: var(--in); } .rel[data-dir="in"] .r-title::before { background: var(--in); }
+.rel[data-dir="out"] .r-title { color: var(--out); } .rel[data-dir="out"] .r-title::before { background: var(--out); }
 .rel ul { list-style: none; padding: 0; }
 .rel button { display: grid; gap: 1px; width: 100%; min-width: 0; text-align: start; background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 7px 10px; cursor: pointer; }
 .rel button:hover { border-color: var(--ink-2); }

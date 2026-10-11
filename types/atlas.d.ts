@@ -442,6 +442,8 @@ export interface AtlasOptions {
   shadow?: boolean;
   /** Most undo steps kept. Default 200. */
   historyLimit?: number;
+  /** Level of the lane titles and the detail's title (`h2` by default); the detail's relations are one below. */
+  headingLevel?: 1 | 2 | 3 | 4 | 5 | 6;
 }
 
 /** A node whose edges mostly run against its lane, or a board with unassigned nodes. Advice only. */

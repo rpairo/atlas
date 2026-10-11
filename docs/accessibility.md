@@ -7,7 +7,9 @@ they say is also in the document as text and buttons.
 
 - The board is a region named after `meta.title` (or the `board` label), and the detail panel is
   named by the `detail` label, so screen-reader users can jump between them.
-- Lanes and bands are sections with their titles as headings.
+- Lanes and bands are sections with their titles as headings: `h2` by default, or the level in the
+  `headingLevel` option, so the map fits the page's outline. An axe-core scan of the examples (light,
+  dark and stacked, with and without a selection, in Chrome and WebKit) reports no violations.
 - Nodes are native `<button>` elements, in reading order lane by lane. The selected node has
   `aria-pressed="true"`.
 - The detail panel repeats the node's lane, title, subtitle and details, and lists its incoming

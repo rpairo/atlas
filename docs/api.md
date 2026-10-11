@@ -31,6 +31,7 @@ Options left out or set to `undefined` keep their defaults.
 | `renderNode` | function | none | `(node, button, live) => void`: replaces the content of each node. See [Custom node content](#custom-node-content). |
 | `animate` | boolean | `true` | Trace wires when a node is selected. |
 | `historyLimit` | number | `200` | Most undo steps kept. |
+| `headingLevel` | 1–6 | `2` | Heading level of the lane titles and of the detail's title; "Incoming" and "Outgoing" go one below. Set it so the map fits the page's outline (under an `h2`, use `3`). |
 | `shadow` | boolean | `true` | Render into a shadow root. With `false` Atlas renders into the element itself and its stylesheet applies to the whole page; keep the default unless you need to. |
 
 The default labels are `Incoming`, `Outgoing`, `Unassigned`, `Feeds back into itself`, `Map` (board)
