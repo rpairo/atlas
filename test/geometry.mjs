@@ -63,7 +63,9 @@ export function geometry(model, { vertical = false } = {}) {
   }));
   for (const [band, v0] of [[L.before, topV], [L.after, botV]]) {
     if (!band) continue;
-    const list = L.order.get(band.id), inner = W - gut[0] - gut[N], w = inner / list.length;
+    // A band node is never narrower than 40 units (on a narrow vertical board the band is wider than
+    // the flow, as in the renderer, where band nodes keep their minimum width).
+    const list = L.order.get(band.id), inner = W - gut[0] - gut[N], w = Math.max(40, inner / list.length);
     list.forEach((id, i) => boxes.set(id, { l: gut[0] + i * w + 5, r: gut[0] + (i + 1) * w - 5, t: v0, b: v0 + BAND }));
   }
   return { boxes, corridors, place, edges, layout: L };

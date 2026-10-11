@@ -233,7 +233,7 @@ export declare const LIMITS: Readonly<{
   groupDepth: number;
 }>;
 
-/** The package version, for example `"0.2.0"`. */
+/** The package version, such as `"0.3.0"`. */
 export declare const VERSION: string;
 
 /** Thrown when a board cannot be used; `errors` lists every problem found. */

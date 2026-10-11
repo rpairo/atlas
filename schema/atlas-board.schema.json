@@ -27,7 +27,8 @@
           "$ref": "#/$defs/id"
         },
         "lang": {
-          "type": "string"
+          "type": "string",
+          "maxLength": 2000
         },
         "ordered": {
           "type": "boolean",

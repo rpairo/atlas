@@ -45,7 +45,11 @@ export function parse(text) {
   }
   let value;
   try {
-    value = JSON.parse(text, (key, v) => (FORBIDDEN_KEYS.has(key) ? undefined : v));
+    value = JSON.parse(text, (key, v) => {
+      if (FORBIDDEN_KEYS.has(key)) return undefined;
+      if (typeof v === "number" && !Number.isFinite(v)) throw new Error(`the number at "${key}" is out of range`);
+      return v;
+    });
   } catch (e) {
     throw new AtlasError([err("", "json", e.message)]);
   }
@@ -57,7 +61,9 @@ export function parse(text) {
  * unknown fields kept aside so that export() can give them back untouched.
  */
 export function normalize(input) {
-  const doc = typeof input === "string" ? parse(input) : clone(input ?? {});
+  // An object goes through the same parser as text: the same size limit and the same refusal of
+  // prototype keys. null is not a board; undefined is an empty one.
+  const doc = typeof input === "string" ? parse(input) : input === undefined ? {} : parse(textOf(input));
   const shape = [];
   if (!isObject(doc)) throw new AtlasError([err("", "type", "a board must be a JSON object")]);
   if (doc.meta !== undefined && !isObject(doc.meta)) shape.push(err("meta", "type", "meta must be an object"));
@@ -85,7 +91,7 @@ export function normalize(input) {
   const taken = new Set(asArray(doc.edges).map(e => e?.id).filter(id => id !== undefined && id !== null && id !== ""));
   const edges = asArray(doc.edges).map(e => {
     const edge = compact(e);
-    if (edge.id === undefined || edge.id === "") {
+    if ((edge.id === undefined || edge.id === "") && typeof edge.from === "string" && typeof edge.to === "string") {
       const base = `${edge.from}->${edge.to}`;
       let n = 0, id = base;
       while (taken.has(id)) id = `${base}#${++n}`;
@@ -130,8 +136,8 @@ export function validate(model) {
   const errors = [];
   const warnings = [];
 
-  const major = /^atlas\/(\d+)$/.exec(String(model.format));
-  if (!major) errors.push(err("format", "format", `unknown format "${model.format}"`));
+  const major = typeof model.format === "string" ? /^atlas\/(\d+)$/.exec(model.format) : null;
+  if (!major) errors.push(err("format", "format", `unknown format "${show(model.format)}"`));
   else if (major[1] !== "1") errors.push(err("format", "version", `format version ${major[1]} is not supported`));
 
   if (!DIRECTIONS.includes(model.meta.direction)) {
@@ -181,7 +187,7 @@ export function validate(model) {
   });
   model.groups.forEach((g, i) => {
     if (g.parent != null && !groups.has(g.parent)) {
-      errors.push(err(`groups[${i}].parent`, "missing", `group "${g.parent}" does not exist`));
+      errors.push(err(`groups[${i}].parent`, "missing", `group "${show(g.parent)}" does not exist`));
     }
   });
   for (const g of model.groups) {
@@ -189,12 +195,12 @@ export function validate(model) {
     let cur = g;
     while (cur && cur.parent != null && groups.has(cur.parent)) {
       if (chain.has(cur.parent)) {
-        errors.push(err(`groups`, "cycle", `group "${g.id}" is its own ancestor`));
+        errors.push(err(`groups`, "cycle", `group "${show(g.id)}" is its own ancestor`));
         break;
       }
       chain.add(cur.parent);
       if (chain.size > LIMITS.groupDepth) {
-        errors.push(err(`groups`, "depth", `group "${g.id}" is nested deeper than ${LIMITS.groupDepth}`));
+        errors.push(err(`groups`, "depth", `group "${show(g.id)}" is nested deeper than ${LIMITS.groupDepth}`));
         break;
       }
       cur = groups.get(cur.parent);
@@ -219,10 +225,10 @@ export function validate(model) {
         });
       }
     }
-    if (n.lane != null && !lanes.has(n.lane)) errors.push(err(`${p}.lane`, "missing", `lane "${n.lane}" does not exist`));
-    if (n.group != null && !groups.has(n.group)) errors.push(err(`${p}.group`, "missing", `group "${n.group}" does not exist`));
+    if (n.lane != null && !lanes.has(n.lane)) errors.push(err(`${p}.lane`, "missing", `lane "${show(n.lane)}" does not exist`));
+    if (n.group != null && !groups.has(n.group)) errors.push(err(`${p}.group`, "missing", `group "${show(n.group)}" does not exist`));
     if (n.lane == null && model.lanes.some(l => l.kind === "flow")) {
-      warnings.push(err(`${p}.lane`, "unassigned", `node "${n.id}" has no lane; it goes to "Unassigned"`));
+      warnings.push(err(`${p}.lane`, "unassigned", `node "${show(n.id)}" has no lane; it goes to "Unassigned"`));
     }
   });
 
@@ -231,16 +237,16 @@ export function validate(model) {
   model.edges.forEach((e, i) => {
     const p = `edges[${i}]`;
     if (typeof e.id !== "string" || !EDGE_ID.test(e.id) || FORBIDDEN_KEYS.has(e.id)) {
-      errors.push(err(`${p}.id`, "id", `"${e.id}" is not a valid edge id`));
+      errors.push(err(`${p}.id`, "id", `"${show(e.id)}" is not a valid edge id`));
     } else {
       if (edgeIds.has(e.id)) errors.push(err(`${p}.id`, "duplicate", `edge id "${e.id}" is repeated`));
       edgeIds.add(e.id);
     }
-    if (!nodes.has(e.from)) errors.push(err(`${p}.from`, "missing", `node "${e.from}" does not exist`));
-    if (!nodes.has(e.to)) errors.push(err(`${p}.to`, "missing", `node "${e.to}" does not exist`));
-    if (e.from === e.to) warnings.push(err(p, "self", `edge "${e.id}" connects "${e.from}" to itself; it is listed, not drawn`));
-    const pair = `${e.from}\u0000${e.to}`;
-    if (pairs.has(pair)) warnings.push(err(p, "parallel", `another edge already goes from "${e.from}" to "${e.to}"; they share one wire`));
+    if (!nodes.has(e.from)) errors.push(err(`${p}.from`, "missing", `node "${show(e.from)}" does not exist`));
+    if (!nodes.has(e.to)) errors.push(err(`${p}.to`, "missing", `node "${show(e.to)}" does not exist`));
+    if (e.from === e.to) warnings.push(err(p, "self", `edge "${show(e.id)}" connects "${show(e.from)}" to itself; it is listed, not drawn`));
+    const pair = `${show(e.from)}\u0000${show(e.to)}`;
+    if (pairs.has(pair)) warnings.push(err(p, "parallel", `another edge already goes from "${show(e.from)}" to "${show(e.to)}"; they share one wire`));
     pairs.add(pair);
     text(errors, `${p}.label`, e.label);
     text(errors, `${p}.details`, e.details);
@@ -258,6 +264,10 @@ export function validate(model) {
   // names the constraints in conflict. Nothing is ever broken silently.
   const firsts = new Map(), lasts = new Map();
   const beforeEdges = [];
+  // Without flow lanes, nodes without a lane go to layers computed from the edges: their
+  // constraints are checked by layout(), which knows the layers, and reported as its warnings.
+  const auto = !model.lanes.some(l => l.kind === "flow");
+  const layered = id => auto && laneOf(nodes.get(id)) === UNASSIGNED;
   model.constraints.forEach((c, i) => {
     const p = `constraints[${i}]`;
     if (!CONSTRAINT_TYPES.includes(c.type)) {
@@ -265,8 +275,9 @@ export function validate(model) {
       return;
     }
     const refs = c.type === "before" ? [c.a, c.b] : [c.node];
-    for (const r of refs) if (!nodes.has(r)) errors.push(err(p, "missing", `node "${r}" does not exist`));
+    for (const r of refs) if (!nodes.has(r)) errors.push(err(p, "missing", `node "${show(r)}" does not exist`));
     if (refs.some(r => !nodes.has(r))) return;
+    if (refs.some(layered)) return;
     if (c.type === "before") {
       const la = laneOf(nodes.get(c.a)), lb = laneOf(nodes.get(c.b));
       if (la !== lb) warnings.push(err(p, "cross-lane", `"${c.a}" and "${c.b}" are in different lanes; ignored`));
@@ -278,6 +289,11 @@ export function validate(model) {
       else map.set(lane, c.node);
     }
   });
+  for (const [lane, node] of firsts) {
+    if (lasts.get(lane) === node && model.nodes.filter(n => laneOf(n) === lane).length > 1) {
+      errors.push(err("constraints", "conflict", `"${node}" cannot be both first and last of lane "${lane}"`));
+    }
+  }
   const cycle = findCycle(beforeEdges);
   if (cycle) errors.push(err("constraints", "cycle", `"before" constraints form a cycle: ${cycle.join(" → ")}`));
   for (const [a, b, p] of beforeEdges) {
@@ -323,13 +339,45 @@ export const OPS = Object.freeze([
 export function apply(model, ops) {
   const next = clone(model);
   const list = Array.isArray(ops) ? ops : [ops];
-  list.forEach((op, i) => {
-    if (!op || !OPS.includes(op.op)) throw new AtlasError([err(`ops[${i}]`, "op", `unknown operation "${op && op.op}"`)]);
-    APPLY[op.op](next, op, `ops[${i}]`);
+  list.forEach((raw, i) => {
+    const p = `ops[${i}]`;
+    if (!isObject(raw) || !OPS.includes(raw.op)) throw new AtlasError([err(p, "op", `unknown operation "${show(isObject(raw) ? raw.op : raw)}"`)]);
+    // A copy: the caller's objects (a details list, a node) never become part of the model.
+    const op = copyOp(raw, p);
+    checkShape(op, p);
+    APPLY[op.op](next, op, p);
   });
   const result = validate(next);
   if (!result.ok) throw new AtlasError(result.errors);
   return { model: next, warnings: result.warnings };
+}
+
+/** A deep copy of an operation that keeps `undefined` (which removes a field in changes). */
+function copyOp(op, path) {
+  try { return structuredClone(op); }
+  catch (e) { throw new AtlasError([err(path, "type", `the operation cannot be copied: ${e.message}`)]); }
+}
+
+/** The arguments an operation takes have the right shape: ids are text, indexes whole numbers,
+ *  changes and payloads objects. Anything else is an AtlasError, not a TypeError further in. */
+function checkShape(op, p) {
+  const text = (k, optional = false) => need((optional && op[k] == null) || typeof op[k] === "string", `${p}.${k}`, `${k} must be an id`);
+  const index = k => need(op[k] == null || Number.isInteger(op[k]), `${p}.${k}`, `${k} must be a whole number`);
+  const object = k => need(op[k] == null || isObject(op[k]), `${p}.${k}`, `${k} must be an object`);
+  switch (op.op) {
+    case "addNode": object("node"); index("index"); text("before", true); text("after", true); break;
+    case "moveNode": text("id"); index("index"); text("before", true); text("after", true); need(op.lane == null || typeof op.lane === "string", `${p}.lane`, "lane must be an id or null"); break;
+    case "renameNode": text("from"); text("to"); break;
+    case "addEdge": object("edge"); break;
+    case "addLane": object("lane"); index("index"); break;
+    case "moveLane": text("id"); index("index"); break;
+    case "removeLane": text("id"); need(op.moveTo == null || typeof op.moveTo === "string", `${p}.moveTo`, "moveTo must be a lane id or null"); break;
+    case "addGroup": object("group"); break;
+    case "addConstraint": object("constraint"); break;
+    case "setMeta": object("changes"); break;
+    case "updateNode": case "updateEdge": case "updateLane": case "updateGroup": text("id"); object("changes"); break;
+    case "removeNode": case "removeEdge": case "removeGroup": text("id"); break;
+  }
 }
 
 const APPLY = {
@@ -362,7 +410,13 @@ const APPLY = {
       const derived = e.id === `${e.from}->${e.to}` || e.id.startsWith(`${e.from}->${e.to}#`);
       if (e.from === from) e.from = to;
       if (e.to === from) e.to = to;
-      if (derived) e.id = e.id.replace(/^[^#]*/, `${e.from}->${e.to}`);
+      if (derived) {
+        // The same suffix if it is free, or the next free one: never an id another edge has.
+        const base = `${e.from}->${e.to}`;
+        let id = e.id.replace(/^[^#]*/, base), n = 0;
+        while (m.edges.some(x => x !== e && x.id === id)) id = `${base}#${++n}`;
+        e.id = id;
+      }
     }
     for (const c of m.constraints) for (const k of ["node", "a", "b"]) if (c[k] === from) c[k] = to;
     if (m.meta.selected === from) m.meta.selected = to;
@@ -370,7 +424,7 @@ const APPLY = {
   addEdge(m, { edge }, p) {
     need(edge && edge.from && edge.to, p, "edge with from and to is required");
     const e = compact(edge);
-    if (!e.id) {
+    if (!e.id && typeof e.from === "string" && typeof e.to === "string") {
       const base = `${e.from}->${e.to}`;
       let n = 0, id = base;
       while (m.edges.some(x => x.id === id)) id = `${base}#${++n}`;
@@ -435,7 +489,7 @@ const APPLY = {
     m.constraints.push(compact(constraint));
   },
   removeConstraint(m, { index }, p) {
-    need(Number.isInteger(index) && index >= 0 && index < m.constraints.length, p, `no constraint at index ${index}`);
+    need(Number.isInteger(index) && index >= 0 && index < m.constraints.length, p, `no constraint at index ${show(index)}`);
     m.constraints.splice(index, 1);
   },
   setMeta(m, { changes }) {
@@ -514,7 +568,7 @@ function findCycle(edges) {
 
 function checkId(errors, path, id) {
   if (typeof id !== "string" || !ID.test(id) || FORBIDDEN_KEYS.has(id)) {
-    errors.push(err(path, "id", `"${id}" is not a valid id (letters, digits, _ . : -, up to 64)`));
+    errors.push(err(path, "id", `"${show(id)}" is not a valid id (letters, digits, _ . : -, up to 64)`));
     return false;
   }
   return true;
@@ -531,6 +585,21 @@ function limit(errors, path, n, max) {
   if (n > max) errors.push(err(path, "too-many", `${n} items; the limit is ${max}`));
 }
 
+/** A board given as an object, as JSON text. */
+function textOf(input) {
+  let text;
+  try { text = JSON.stringify(input); } catch (e) { throw new AtlasError([err("", "json", e.message)]); }
+  if (text === undefined) throw new AtlasError([err("", "type", "a board must be a JSON object")]);
+  return text;
+}
+
+/** A document value as text for a message, whatever it is (even an object whose toString is not a
+ *  function, which would throw inside a template string). */
+function show(v) {
+  if (typeof v === "string") return v;
+  try { return JSON.stringify(v) ?? String(v); } catch { return Object.prototype.toString.call(v); }
+}
+
 function err(path, code, message) {
   return { path, code, message };
 }
@@ -541,13 +610,13 @@ function need(cond, path, message) {
 
 function find(list, id, path) {
   const x = list.find(v => v.id === id);
-  need(x, path, `"${id}" does not exist`);
+  need(x, path, `"${show(id)}" does not exist`);
   return x;
 }
 
 function indexOf(list, id, path) {
   const i = list.findIndex(v => v.id === id);
-  need(i >= 0, path, `"${id}" does not exist`);
+  need(i >= 0, path, `"${show(id)}" does not exist`);
   return i;
 }
 

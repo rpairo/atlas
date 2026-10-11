@@ -326,6 +326,18 @@ try {
     m3.destroy();
     host3.remove();
   } catch (e) { res.behaviour.push(`pinned check threw ${e.name}: ${e.message}`); }
+  // Adding a node never moves existing ones, also when a constraint draws a lane in another order
+  // than its document (the position is counted in drawn order).
+  try {
+    const host5 = document.createElement("div"); document.body.append(host5);
+    const m5 = new Atlas(host5, { animate: false, document: { lanes: [{ id: "L" }], groups: [{ id: "g" }], nodes: [{ id: "a", lane: "L" }, { id: "b", lane: "L" }, { id: "c", lane: "L", group: "g" }] } });
+    m5.addConstraint({ type: "last", node: "a" });
+    const before5 = m5._layout.order.get("L").join(",");
+    m5.addNode({ id: "d", lane: "L", group: "g" });
+    const after5 = m5._layout.order.get("L").filter(id => id !== "d").join(",");
+    if (after5 !== before5) res.behaviour.push(`addNode moved existing nodes: ${before5} -> ${m5._layout.order.get("L").join(",")}`);
+    m5.destroy(); host5.remove();
+  } catch (e) { res.behaviour.push(`addNode check threw ${e.name}: ${e.message}`); }
   // <atlas-map>: an inline board's events come after the code that inserted it could listen, the
   // latest src wins over a slower earlier one, ready and error tell the outcome, and a destroyed
   // element comes back when it is inserted again.

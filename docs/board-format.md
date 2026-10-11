@@ -27,7 +27,9 @@ Schema (draft 2020-12) for editors and CI checks.
 Only `nodes` is really needed: `{ "nodes": [{ "id": "a" }] }` is a valid board.
 
 A field set to `null` is the same as a field left out: `"lane": null` loads as a node without a
-lane, and Atlas saves the board without the field, so what it saves always passes the schema.
+lane, and Atlas saves the board without the field. The JSON Schema describes a board as Atlas saves
+it, so it refuses `null`; loading is lenient, saving is strict, and what Atlas saves always passes
+the schema. Numbers must be finite: `1e400` is refused.
 
 ## Top level
 
@@ -53,7 +55,8 @@ well.
 | `direction` | `"right"`, `"down"`, `"left"`, `"up"` | `"right"` | Where the flow goes: lanes follow each other in this direction. |
 | `selected` | node id | none | Node selected when the board loads (the `selected` option or attribute wins). |
 | `ordered` | boolean | `false` | Set to `true` by Atlas once it has tidied the board; from then on the node order is kept as it is. |
-| `title`, `lang` | string | none | For your own use (the development viewer shows the title). Atlas does not render them. |
+| `title` | string | none | Names the board for screen readers (the board region's accessible name); the development viewer shows it. Atlas draws no title. |
+| `lang` | string | none | For your own use; Atlas does not render it. |
 
 ## Lanes and bands
 
@@ -108,7 +111,7 @@ edges.
 | Field | Type | Meaning |
 |---|---|---|
 | `from`, `to` | node ids, required | Direction of the connection. |
-| `id` | edge id | Optional. Without one, an edge gets `from->to`, then `from->to#1`, `#2`… for repeats. Allowed characters: letters, digits, `_ . : # > -`, up to 141. |
+| `id` | edge id | Optional (an empty string counts as none). Without one, an edge gets `from->to`, then `from->to#1`, `#2`… for repeats, skipping ids other edges have. Allowed characters: letters, digits, `_ . : # > -`, up to 141. |
 | `label` | string | Shown next to the connected node in the detail panel. |
 | `details` | string | Why the relation exists. The detail panel shows it under the related node. |
 | `type` | string | Kept in the board. If `edgeTypes` is not empty and does not contain it, a warning is reported. |

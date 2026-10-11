@@ -1013,6 +1013,10 @@ class Batch {
   }
   addNode(node, { index, edges = [] } = {}) {
     this.apply([{ op: "addNode", node }, ...edges.map(e => ({ op: "addEdge", edge: e }))]);
+    // The document order of every lane becomes its drawn order first (constraints and groups can
+    // draw a lane in another order than the document's): a position counted in drawn order then
+    // lands exactly there, and no existing node changes places.
+    this.model = withOrder(this.model, computeLayout(this.model));
     // Positions are relative to the node's lane, which may be automatic: anchor on a neighbour.
     const L = computeLayout(this.model);
     const peers = L.order.get(L.laneOf.get(node.id)).filter(id => id !== node.id);
