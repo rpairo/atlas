@@ -23,6 +23,8 @@ export const STYLES = `
   --in: var(--atlas-in, #2a64a8);
   --shadow: var(--atlas-shadow, rgba(20, 32, 51, .28));
   --focus: var(--atlas-focus, var(--ink));   /* its own colour: blue would read as "incoming" */
+  --mark: var(--atlas-mark, #ffeeb0);          /* a marked node's fill (search results) */
+  --mark-dot: var(--atlas-mark-dot, #9a6b00);  /* and its dot: a shape, not only a colour */
   --radius: var(--atlas-radius, 6px);
   --mono: var(--atlas-font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
   --node-min: var(--atlas-node-min, 150px);
@@ -40,12 +42,14 @@ export const STYLES = `
     --paper: var(--atlas-paper, #0c141e); --sheet: var(--atlas-sheet, #132030); --ink: var(--atlas-ink, #e3eaf2);
     --ink-2: var(--atlas-ink-2, #98a9bd); --rule: var(--atlas-rule, #2a3a4e); --grid: var(--atlas-grid, #152232);
     --out: var(--atlas-out, #e88d52); --in: var(--atlas-in, #6ea8ec); --shadow: var(--atlas-shadow, rgba(0, 0, 0, .55));
+    --mark: var(--atlas-mark, #3a3112); --mark-dot: var(--atlas-mark-dot, #e0b43a);
   }
 }
 :host([theme="dark"]) .atlas, [theme="dark"] > .atlas {
   --paper: var(--atlas-paper, #0c141e); --sheet: var(--atlas-sheet, #132030); --ink: var(--atlas-ink, #e3eaf2);
   --ink-2: var(--atlas-ink-2, #98a9bd); --rule: var(--atlas-rule, #2a3a4e); --grid: var(--atlas-grid, #152232);
   --out: var(--atlas-out, #e88d52); --in: var(--atlas-in, #6ea8ec); --shadow: var(--atlas-shadow, rgba(0, 0, 0, .55));
+    --mark: var(--atlas-mark, #3a3112); --mark-dot: var(--atlas-mark-dot, #e0b43a);
 }
 @supports (height: 1dvh) { .atlas { --sheet-height: var(--atlas-sheet-height, min(max(42dvh, 280px), 100dvh - 120px)); } }
 *, *::before, *::after { box-sizing: border-box; }
@@ -106,10 +110,15 @@ ol.nodes > li > .panel { margin-top: 10px; }
 .node:hover { border-color: var(--ink-2); }
 /* Nodes outside the selection step back without losing their text: paper instead of sheet, a faint
    border and the secondary ink, which keeps 4.5:1 on the paper (WCAG 1.4.3). Opacity would not. */
-.board.has-selection .node:not(.on, .near-in, .near-out) { background: var(--paper); border-color: var(--grid); }
-.board.has-selection .node:not(.on, .near-in, .near-out) .t { color: var(--ink-2); }   /* colour only: a lighter weight would rewrap titles and move nodes */
+.board:is(.has-selection, .has-marks) .node:not(.on, .near-in, .near-out, .marked) { background: var(--paper); border-color: var(--grid); }
+.board:is(.has-selection, .has-marks) .node:not(.on, .near-in, .near-out, .marked) .t { color: var(--ink-2); }   /* colour only: a lighter weight would rewrap titles and move nodes */
 /* Hovering a node that stepped back still answers (the rule above outweighed .node:hover). */
-.board.has-selection .node:not(.on, .near-in, .near-out):hover { border-color: var(--ink-2); }
+.board:is(.has-selection, .has-marks) .node:not(.on, .near-in, .near-out, .marked):hover { border-color: var(--ink-2); }
+/* Marks: a fill and a dot (the dot is a shape: the fill alone differs from white mostly in hue), the
+   current one ringed with dashes; borders stay free for the selection's relations. */
+.node.marked { background: var(--mark); }
+.node.marked::after { content: ""; position: absolute; top: 5px; inset-inline-end: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--mark-dot); pointer-events: none; }
+.node.marked-current:not(:focus-visible) { outline: 2px dashed var(--mark-dot); outline-offset: 2px; }
 .node.on { border-color: var(--out); box-shadow: 0 0 0 1.5px var(--out); transition: box-shadow .12s; }   /* one transition, not one per node and property */
 .node.near-out { border-color: var(--out); }
 .node.near-in { border-color: var(--in); }
@@ -206,7 +215,10 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
    its incoming and its outgoing neighbours differ by the shape of a ring inside the node (no size
    changes: selecting never moves a node), nothing is dimmed, and wires use system colours. */
 @media (forced-colors: active) {
-  .board.has-selection .node:not(.on, .near-in, .near-out) { border-color: GrayText; }
+  .board:is(.has-selection, .has-marks) .node:not(.on, .near-in, .near-out, .marked) { border-color: GrayText; }
+  .node.marked, .node.marked :is(.t, .s) { forced-color-adjust: none; background: Mark; color: MarkText; }
+  .node.marked::after { forced-color-adjust: none; background: MarkText; }
+  .node.marked-current:not(:focus-visible) { outline: 2px dashed CanvasText; }
   .node.on::before, .node.near-in::before, .node.near-out::before { content: ""; position: absolute; inset: 2px; border-radius: 2px; pointer-events: none; }
   .node.on::before { border: 3px solid Highlight; }
   .node.near-out::before { border: 2px solid CanvasText; }

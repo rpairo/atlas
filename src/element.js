@@ -14,7 +14,7 @@ import { Atlas } from "./atlas.js";
 const Base = typeof HTMLElement !== "undefined" ? HTMLElement : class {};
 
 export class AtlasMap extends Base {
-  static get observedAttributes() { return ["src", "selected"]; }
+  static get observedAttributes() { return ["src", "selected", "marked"]; }
 
   constructor() {
     super();
@@ -46,6 +46,13 @@ export class AtlasMap extends Base {
     if (!this.atlas || old === value) return;
     if (name === "src" && value) this._fetch(value);
     if (name === "selected") this.atlas.select(value, { focus: false });
+    if (name === "marked") this._mark();
+  }
+
+  /** The marked attribute: node ids separated by spaces. */
+  _mark() {
+    const value = this.getAttribute("marked");
+    this.atlas.mark(value ? value.split(/\s+/).filter(Boolean) : null);
   }
 
   disconnectedCallback() {
@@ -80,6 +87,7 @@ export class AtlasMap extends Base {
       return this._fail(e.errors ?? [{ path: "", code: "load", message: String(e.message ?? e) }]);
     }
     this.error = null;
+    if (this.hasAttribute("marked")) this._mark();
     this._settle.resolve(this.atlas);
   }
 

@@ -1953,6 +1953,8 @@ const STYLES = `
   --in: var(--atlas-in, #2a64a8);
   --shadow: var(--atlas-shadow, rgba(20, 32, 51, .28));
   --focus: var(--atlas-focus, var(--ink));   /* its own colour: blue would read as "incoming" */
+  --mark: var(--atlas-mark, #ffeeb0);          /* a marked node's fill (search results) */
+  --mark-dot: var(--atlas-mark-dot, #9a6b00);  /* and its dot: a shape, not only a colour */
   --radius: var(--atlas-radius, 6px);
   --mono: var(--atlas-font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
   --node-min: var(--atlas-node-min, 150px);
@@ -1970,12 +1972,14 @@ const STYLES = `
     --paper: var(--atlas-paper, #0c141e); --sheet: var(--atlas-sheet, #132030); --ink: var(--atlas-ink, #e3eaf2);
     --ink-2: var(--atlas-ink-2, #98a9bd); --rule: var(--atlas-rule, #2a3a4e); --grid: var(--atlas-grid, #152232);
     --out: var(--atlas-out, #e88d52); --in: var(--atlas-in, #6ea8ec); --shadow: var(--atlas-shadow, rgba(0, 0, 0, .55));
+    --mark: var(--atlas-mark, #3a3112); --mark-dot: var(--atlas-mark-dot, #e0b43a);
   }
 }
 :host([theme="dark"]) .atlas, [theme="dark"] > .atlas {
   --paper: var(--atlas-paper, #0c141e); --sheet: var(--atlas-sheet, #132030); --ink: var(--atlas-ink, #e3eaf2);
   --ink-2: var(--atlas-ink-2, #98a9bd); --rule: var(--atlas-rule, #2a3a4e); --grid: var(--atlas-grid, #152232);
   --out: var(--atlas-out, #e88d52); --in: var(--atlas-in, #6ea8ec); --shadow: var(--atlas-shadow, rgba(0, 0, 0, .55));
+    --mark: var(--atlas-mark, #3a3112); --mark-dot: var(--atlas-mark-dot, #e0b43a);
 }
 @supports (height: 1dvh) { .atlas { --sheet-height: var(--atlas-sheet-height, min(max(42dvh, 280px), 100dvh - 120px)); } }
 *, *::before, *::after { box-sizing: border-box; }
@@ -2036,10 +2040,15 @@ ol.nodes > li > .panel { margin-top: 10px; }
 .node:hover { border-color: var(--ink-2); }
 /* Nodes outside the selection step back without losing their text: paper instead of sheet, a faint
    border and the secondary ink, which keeps 4.5:1 on the paper (WCAG 1.4.3). Opacity would not. */
-.board.has-selection .node:not(.on, .near-in, .near-out) { background: var(--paper); border-color: var(--grid); }
-.board.has-selection .node:not(.on, .near-in, .near-out) .t { color: var(--ink-2); }   /* colour only: a lighter weight would rewrap titles and move nodes */
+.board:is(.has-selection, .has-marks) .node:not(.on, .near-in, .near-out, .marked) { background: var(--paper); border-color: var(--grid); }
+.board:is(.has-selection, .has-marks) .node:not(.on, .near-in, .near-out, .marked) .t { color: var(--ink-2); }   /* colour only: a lighter weight would rewrap titles and move nodes */
 /* Hovering a node that stepped back still answers (the rule above outweighed .node:hover). */
-.board.has-selection .node:not(.on, .near-in, .near-out):hover { border-color: var(--ink-2); }
+.board:is(.has-selection, .has-marks) .node:not(.on, .near-in, .near-out, .marked):hover { border-color: var(--ink-2); }
+/* Marks: a fill and a dot (the dot is a shape: the fill alone differs from white mostly in hue), the
+   current one ringed with dashes; borders stay free for the selection's relations. */
+.node.marked { background: var(--mark); }
+.node.marked::after { content: ""; position: absolute; top: 5px; inset-inline-end: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--mark-dot); pointer-events: none; }
+.node.marked-current:not(:focus-visible) { outline: 2px dashed var(--mark-dot); outline-offset: 2px; }
 .node.on { border-color: var(--out); box-shadow: 0 0 0 1.5px var(--out); transition: box-shadow .12s; }   /* one transition, not one per node and property */
 .node.near-out { border-color: var(--out); }
 .node.near-in { border-color: var(--in); }
@@ -2136,7 +2145,10 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
    its incoming and its outgoing neighbours differ by the shape of a ring inside the node (no size
    changes: selecting never moves a node), nothing is dimmed, and wires use system colours. */
 @media (forced-colors: active) {
-  .board.has-selection .node:not(.on, .near-in, .near-out) { border-color: GrayText; }
+  .board:is(.has-selection, .has-marks) .node:not(.on, .near-in, .near-out, .marked) { border-color: GrayText; }
+  .node.marked, .node.marked :is(.t, .s) { forced-color-adjust: none; background: Mark; color: MarkText; }
+  .node.marked::after { forced-color-adjust: none; background: MarkText; }
+  .node.marked-current:not(:focus-visible) { outline: 2px dashed CanvasText; }
   .node.on::before, .node.near-in::before, .node.near-out::before { content: ""; position: absolute; inset: 2px; border-radius: 2px; pointer-events: none; }
   .node.on::before { border: 3px solid Highlight; }
   .node.near-out::before { border: 2px solid CanvasText; }
@@ -2314,6 +2326,11 @@ const DEFAULT_LABELS = {
   noneOut: "{hub}: no outgoing connections",
   noneAll: "{hub}: no connections",
   cleared: "Selection cleared",
+  // Marks (search results and other highlights).
+  marks: "{total} found",
+  noMarks: "Nothing found",
+  markStep: "{n} of {total}: {title}",
+  marked: "Match {n} of {total}",
   keys: "Arrow keys move between nodes; Enter selects. Alt with Down or Up steps through the selected node's connections, Alt with Right or Left through its outgoing or incoming ones. Escape goes back to it, then clears the selection.",
 };
 let UID = 0;   // a prefix per map for the ids of its descriptions (unique in the page without a shadow root)
@@ -2351,6 +2368,8 @@ class Atlas extends EventTarget {
     this._wireEls = new Map();    // wire key → its drawn elements and path
     this._after = null;           // a selection made while nodes moved: paint it when they stop
     this._sheet = "peek";         // the detail as a sheet: folded to its head, or open
+    this._marks = [];             // marked node ids, in reading order
+    this._markAt = null;          // the current mark (nextMark), or null
     this._frame = 0;
     this._mount();
     this._model = M.normalize({ nodes: [] });
@@ -2380,6 +2399,48 @@ class Atlas extends EventTarget {
     const rank = new Map(this._ordered().map((id, i) => [id, i]));
     return this._model.nodes.filter(hit).map(n => n.id).sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0));
   }
+  /** The marked nodes (see mark()), in reading order. */
+  get marked() { return [...this._marks]; }
+
+  /**
+   * Marks nodes, for example the results of a search (map.mark(map.find(text))) or of a filter:
+   * they keep their look while every other node steps back, as around a selection. Unknown ids are
+   * ignored; null or an empty list clears. Marks follow renames, leave with removed nodes and are
+   * cleared by load(); they are not saved and not undoable, and never change the selection.
+   * Screen readers hear how many were marked.
+   */
+  mark(ids) {
+    if (this._destroyed) return;
+    const want = new Set(ids == null ? [] : [...ids].filter(id => this._els.has(id)));
+    const next = this._ordered().filter(id => want.has(id));
+    if (next.join("\u0000") === this._marks.join("\u0000")) return;
+    this._marks = next;
+    this._markAt = null;
+    this._highlight();
+    clearTimeout(this._counting);
+    // Said once the marks settle (a search box marks on every key).
+    this._counting = setTimeout(() => { if (!this._destroyed) this._announce(next.length ? fill(this.labels.marks, { total: next.length }) : (want.size || ids?.length ? this.labels.noMarks : "")); }, 500);
+    this._emit("mark", { ids: [...next], current: null });
+  }
+
+  /**
+   * Moves to the next mark (step -1: the previous one), wrapping: it becomes the current mark,
+   * scrolls into view (clear of the detail sheet) and takes the map's tab stop, and screen readers
+   * hear "2 of 5: Triage". With { focus: true } it also takes focus (a search box keeps it by
+   * default). Never changes the selection. Returns the id, or null without marks.
+   */
+  nextMark(step = 1, { focus = false } = {}) {
+    if (this._destroyed || !this._marks.length) return null;
+    const n = this._marks.length;
+    const i = this._markAt === null ? (step >= 0 ? 0 : n - 1) : (((this._marks.indexOf(this._markAt) + Math.trunc(step)) % n) + n) % n;
+    this._markAt = this._marks[i];
+    this._highlight();
+    this._setTabStop(this._markAt, focus, true);
+    this._announce(fill(this.labels.markStep, { n: i + 1, total: n, title: this._title(this._markAt) }));
+    this._emit("mark", { ids: [...this._marks], current: this._markAt });
+    return this._markAt;
+  }
+
   /** Nodes that contradict their lane: most of their edges run backwards. Advice, never applied. */
   suggestions() {
     const out = [];
@@ -2414,6 +2475,8 @@ class Atlas extends EventTarget {
     this._future = [];
     this._live.clear();
     this._sheet = "peek";
+    this._marks = [];
+    this._markAt = null;
     this._rev++;
     this._render({ animate: false });
     const first = selected === undefined ? (m.meta.selected ?? null) : selected;
@@ -2585,6 +2648,7 @@ class Atlas extends EventTarget {
     removeEventListener("resize", this._onResize);
     cancelAnimationFrame(this._frame);
     clearTimeout(this._saying);
+    clearTimeout(this._counting);
     const running = [...this._animations, ...this._ghostAnims, ...this._cues];
     this._animations = [];          // a transition's end callback sees it is no longer current
     this._ghostAnims = [];
@@ -2645,6 +2709,8 @@ class Atlas extends EventTarget {
       swapKey(this._items, from, to);
       swapKey(this._live, from, to);
       this._idOf.set(this._els.get(to), to);
+      this._marks = this._marks.map(x => (x === from ? to : x));
+      if (this._markAt === from) this._markAt = to;
       if (this._selected === from) { this._selected = to; followed = true; }
     }
     return followed;
@@ -2672,8 +2738,8 @@ class Atlas extends EventTarget {
     // Three layers: halos under every wire, wires, then the dots and arrowheads on top.
     this._halos = svgEl("g");
     this._lines = svgEl("g");
-    this._marks = svgEl("g");
-    this._svg.append(this._halos, this._lines, this._marks);
+    this._tips = svgEl("g");
+    this._svg.append(this._halos, this._lines, this._tips);
     this._ghosts = el("div", "ghosts");   // removed nodes fading out, kept across rebuilds
     this._ghosts.setAttribute("aria-hidden", "true");
     this._panel = el("aside", "panel");
@@ -2744,6 +2810,10 @@ class Atlas extends EventTarget {
     // loaded) is no longer selected, and listeners hear it.
     const lost = this._selected !== null && !this._model.nodes.some(n => n.id === this._selected);
     if (lost) { this._selected = null; this._ring = null; }
+    // Marks leave with their nodes, and keep reading order.
+    const present = new Set(this._model.nodes.map(n => n.id));
+    if (this._marks.some(x => !present.has(x))) this._marks = this._marks.filter(x => present.has(x));
+    if (this._markAt !== null && !present.has(this._markAt)) this._markAt = null;
     const active = this._active();
     const hadFocus = active !== null && this._board.contains(active);
     // Motion: none with animate: false; under reduced motion only cues that do not travel.
@@ -3046,11 +3116,19 @@ class Atlas extends EventTarget {
     return li;
   }
 
+  /** A node's CSS parts: node, node-<type>, status-<status>, selected, marked, marked-current. */
+  _partOf(n) {
+    const live = this._live.get(n.id) ?? {};
+    const type = typeof n.type === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(n.type) ? n.type : null;
+    const marked = this._marks.includes(n.id);
+    return ["node", type && `node-${type}`, live.status && `status-${live.status}`, n.id === this._selected && "selected",
+      marked && "marked", marked && n.id === this._markAt && "marked-current"].filter(Boolean).join(" ");
+  }
+
   _fillNode(n, b) {
     if (!n || !b) return;
     const live = this._live.get(n.id) ?? {};
-    const type = typeof n.type === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(n.type) ? n.type : null;
-    b.setAttribute("part", ["node", type && `node-${type}`, live.status && `status-${live.status}`].filter(Boolean).join(" "));
+    b.setAttribute("part", this._partOf(n));
     if (live.status) b.dataset.status = live.status; else delete b.dataset.status;
     if (this.options.renderNode) { this.options.renderNode(M.clone(n), b, { ...live }); return; }
     const t = txt("span", "t", n.title ?? n.id);
@@ -3163,15 +3241,21 @@ class Atlas extends EventTarget {
       if (e.from === id && e.to !== id) outs.add(e.to);
       if (e.to === id && e.from !== id) ins.add(e.from);
     }
+    const marks = new Set(this._marks);
+    const byId = new Map(this._model.nodes.map(n => [n.id, n]));
     for (const [nid, b] of this._els) {
       b.classList.toggle("on", nid === id);
       b.classList.toggle("near-out", outs.has(nid));
       b.classList.toggle("near-in", ins.has(nid));
+      b.classList.toggle("marked", marks.has(nid));
+      b.classList.toggle("marked-current", nid === this._markAt);
+      if (byId.has(nid)) b.setAttribute("part", this._partOf(byId.get(nid)));
       // The selection is the current node of the map, not a toggle (aria-pressed read "toggle button,
       // not pressed" on every node).
       if (nid === id) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current");
     }
     this._board.classList.toggle("has-selection", id !== null);
+    this._board.classList.toggle("has-marks", marks.size > 0);
     this._describe();
   }
 
@@ -3211,6 +3295,10 @@ class Atlas extends EventTarget {
       s.out.forEach((x, i) => say(x, i, s.out, this.labels.outStep));
       texts.set(hub, this._summary(hub));
     }
+    this._marks.forEach((id, i) => {
+      const t = fill(this.labels.marked, { n: i + 1, total: this._marks.length });
+      texts.set(id, texts.has(id) ? `${texts.get(id)}; ${t}` : t);
+    });
     const spans = [this._keysHint];
     let k = 0;
     for (const [id, b] of this._els) {
@@ -3481,7 +3569,7 @@ class Atlas extends EventTarget {
       const dot = svgEl("circle", { class: `dot ${w.k}${motion ? " draw" : ""}`, cx: f(p[0].x), cy: f(p[0].y), r: 3.2 });
       this._halos.append(halo);
       this._lines.append(line);
-      this._marks.append(dot, arrow);
+      this._tips.append(dot, arrow);
       if (motion) {
         const len = line.getTotalLength();
         const dur = Math.max(0.2, len / SPEED);
@@ -3944,7 +4032,7 @@ const { Atlas } = __modules.atlas;
 const Base = typeof HTMLElement !== "undefined" ? HTMLElement : class {};
 
 class AtlasMap extends Base {
-  static get observedAttributes() { return ["src", "selected"]; }
+  static get observedAttributes() { return ["src", "selected", "marked"]; }
 
   constructor() {
     super();
@@ -3976,6 +4064,13 @@ class AtlasMap extends Base {
     if (!this.atlas || old === value) return;
     if (name === "src" && value) this._fetch(value);
     if (name === "selected") this.atlas.select(value, { focus: false });
+    if (name === "marked") this._mark();
+  }
+
+  /** The marked attribute: node ids separated by spaces. */
+  _mark() {
+    const value = this.getAttribute("marked");
+    this.atlas.mark(value ? value.split(/\s+/).filter(Boolean) : null);
   }
 
   disconnectedCallback() {
@@ -4010,6 +4105,7 @@ class AtlasMap extends Base {
       return this._fail(e.errors ?? [{ path: "", code: "load", message: String(e.message ?? e) }]);
     }
     this.error = null;
+    if (this.hasAttribute("marked")) this._mark();
     this._settle.resolve(this.atlas);
   }
 

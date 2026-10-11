@@ -248,6 +248,53 @@ try {
     if (!map.find(accented.toUpperCase()).includes(live[0])) res.behaviour.push(`find("${accented.toUpperCase()}") misses ${live[0]}`);
     map.select(null, { focus: false });
   } catch (e) { res.behaviour.push(`assistive check threw ${e.name}: ${e.message}`); }
+  // Marks: a fill and a dot that read in both themes, nothing moves, the rest steps back (but not
+  // the selection's neighbours), they follow renames, leave with removed nodes, are cleared by load,
+  // and nextMark() walks them in reading order without selecting, saying where it is.
+  try {
+    const rgb = c => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+    const lum = c => { const [r, g, b] = rgb(c).map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+    const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+    const before = rects();
+    const heard = [];
+    const onMark = e => heard.push(e.detail);
+    map.addEventListener("mark", onMark);
+    const some = live.filter((_, i) => i % 5 === 1).slice(0, 4);
+    map.mark([...some, "no such node"]);
+    if (map.marked.join() !== map._ordered().filter(x => some.includes(x)).join()) res.behaviour.push(`marked ${map.marked.join(",")} for ${some.join(",")}`);
+    const after = rects();
+    for (const [k, v] of before) { const w = after.get(k); if (!w || Math.abs(w.l - v.l) > 0.5 || Math.abs(w.t - v.t) > 0.5) { res.behaviour.push(`mark() moved ${k}`); break; } }
+    const b0 = map._els.get(some[0]), cs = getComputedStyle(b0);
+    if (!(b0.getAttribute("part") ?? "").split(" ").includes("marked")) res.behaviour.push("a marked node has no part marked");
+    if (!matchMedia("(forced-colors: active)").matches) {
+      const dot = getComputedStyle(b0, "::after").backgroundColor, paper = getComputedStyle(boardEl).backgroundColor;
+      if (ratio(dot, cs.backgroundColor) < 3 || ratio(dot, paper) < 3) res.behaviour.push(`the mark's dot has ${ratio(dot, cs.backgroundColor).toFixed(2)}:1 on its fill, ${ratio(dot, paper).toFixed(2)}:1 on paper`);
+      if (ratio(getComputedStyle(b0.querySelector(".t") ?? b0).color, cs.backgroundColor) < 4.5) res.behaviour.push("a marked node's title is under 4.5:1 on its fill");
+      const other = [...map._els.values()].find(b => !b.matches(".marked"));
+      if (other && getComputedStyle(other).backgroundColor !== paper) res.behaviour.push("an unmarked node did not step back");
+    }
+    // nextMark: current mark in reading order, revealed, tab stop, said, selection untouched.
+    const sel0 = map.selected;
+    const first = map.nextMark(), second = map.nextMark();
+    if (first !== map.marked[0] || second !== map.marked[1 % map.marked.length]) res.behaviour.push(`nextMark went ${first}, ${second}`);
+    if (map.selected !== sel0) res.behaviour.push("nextMark changed the selection");
+    if (map._els.get(second).tabIndex !== 0) res.behaviour.push("the current mark does not hold the tab stop");
+    if (!(map._els.get(second).getAttribute("part") ?? "").includes("marked-current")) res.behaviour.push("the current mark has no part marked-current");
+    await new Promise(r => setTimeout(r, 150));
+    if (!map._status.textContent.includes(`2 of ${map.marked.length}`)) res.behaviour.push(`nextMark said "${map._status.textContent}"`);
+    if (map.nextMark(-1) !== first) res.behaviour.push("nextMark(-1) did not go back");
+    // Follow a rename, leave with a removed node, clear.
+    map.renameNode(some[0], "audit_marked");
+    if (!map.marked.includes("audit_marked")) res.behaviour.push("a mark did not follow a rename");
+    map.undo();
+    map.removeNode(some[1]);
+    if (map.marked.includes(some[1])) res.behaviour.push("a removed node stayed marked");
+    map.undo();
+    map.mark(null);
+    if (map.marked.length || map.root.querySelector(".marked") || boardEl.classList.contains("has-marks")) res.behaviour.push("mark(null) left marks");
+    if (heard.length < 2 || heard.some(d => !Array.isArray(d.ids))) res.behaviour.push(`mark events: ${JSON.stringify(heard).slice(0, 120)}`);
+    map.removeEventListener("mark", onMark);
+  } catch (e) { res.behaviour.push(`marks check threw ${e.name}: ${e.message}`); }
   // Forced colours (Windows contrast themes; Chromium emulates them): the selection, an incoming
   // and an outgoing neighbour and the rest differ by more than colour.
   if (matchMedia("(forced-colors: active)").matches) {
