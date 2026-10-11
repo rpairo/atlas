@@ -253,6 +253,67 @@ try {
       map.select(null, { focus: false });
     }
   }
+  // Keyboard steps through connections: Alt with Down visits every neighbour of the selection once,
+  // Alt with Right every outgoing one and Alt with Left every incoming one (the other way round when
+  // the flow goes left); each step says where it is; an empty direction keeps focus and says so;
+  // Escape goes back to the selection, then clears it; the detail lists them in the same order.
+  try {
+    const m0 = map.toJSON();
+    const press = (id, key, alt = true) => { map._els.get(id).dispatchEvent(new KeyboardEvent("keydown", { key, altKey: alt, bubbles: true, composed: true, cancelable: true })); return map._idOf.get(map.root.activeElement); };
+    const desc = id => { const ref = map._els.get(id).getAttribute("aria-describedby"); return ref ? map.root.getElementById?.(ref)?.textContent ?? map.root.querySelector(`#${CSS.escape(ref)}`)?.textContent ?? "" : ""; };
+    const leftFlow = map._layout.direction === "left";
+    let stepped = 0;
+    for (const hub of live.slice(0, 12)) {
+      const ins = [...new Set(m0.edges.filter(e => e.to === hub && e.from !== hub).map(e => e.from))];
+      const outs = [...new Set(m0.edges.filter(e => e.from === hub && e.to !== hub).map(e => e.to))];
+      for (const [key, want] of [["ArrowDown", [...ins, ...outs]], [leftFlow ? "ArrowLeft" : "ArrowRight", outs], [leftFlow ? "ArrowRight" : "ArrowLeft", ins]]) {
+        map.select(hub, { animate: false });
+        let at = hub;
+        const seen = [];
+        for (let k = 0; k < want.length; k++) {
+          at = press(at, key);
+          seen.push(at);
+        }
+        if (want.length && [...new Set(seen)].sort().join() !== [...new Set(want)].sort().join()) res.behaviour.push(`Alt+${key} from ${hub} reached ${[...new Set(seen)].length} of ${new Set(want).size} (${seen.slice(0, 4).join(", ")})`);
+        if (seen.some(x => x === undefined || !desc(x))) res.behaviour.push(`Alt+${key} from ${hub}: a step without a description`);
+        if (!want.length) {
+          const stay = press(hub, key);
+          if (stay !== hub || !map._status.textContent) res.behaviour.push(`Alt+${key} on ${hub} with nothing that way moved to ${stay} and said "${map._status.textContent}"`);
+        }
+        stepped += seen.length;
+      }
+      // Escape: back to the selection from a connection, then the selection is cleared.
+      if (ins.length + outs.length) {
+        map.select(hub, { animate: false });
+        const there = press(hub, "ArrowDown");
+        const back = press(there, "Escape", false);
+        if (back !== hub || map.selected !== hub) res.behaviour.push(`Escape from ${there} went to ${back} (selected ${map.selected})`);
+        press(hub, "Escape", false);
+        if (map.selected !== null) res.behaviour.push(`Escape on the selection ${hub} did not clear it`);
+        // The detail lists the neighbours in the order of the steps.
+        map.select(hub, { focus: false, animate: false });
+        const listed = [...map.root.querySelectorAll(".panel .rel button .rt")].map(x => x.textContent);
+        const stepsOrder = map._star(hub).all.map(x => map.node(x.id)?.title ?? x.id);
+        const firstEach = [...map.root.querySelectorAll(".panel .rel")].flatMap(r => [...new Set([...r.querySelectorAll("button .rt")].map(x => x.textContent))]);
+        if (firstEach.join("|") !== stepsOrder.join("|")) res.behaviour.push(`the detail of ${hub} lists ${firstEach.slice(0, 4).join(", ")}; the keys step ${stepsOrder.slice(0, 4).join(", ")}`);
+      }
+    }
+    if (!stepped) res.behaviour.push("no keyboard step was taken");
+    // Every step says "n of N": the n-th step's description has its position and the total.
+    const hub = live.find(x => m0.edges.filter(e => e.to === x && e.from !== x).length >= 2);
+    if (hub) {
+      map.select(hub, { animate: false });
+      const total = map._star(hub).all.length;
+      let at = hub;
+      for (let k = 1; k <= Math.min(total, 4); k++) {
+        at = press(at, "ArrowDown");
+        const n = map._star(hub).in.length;
+        const want = k <= n ? `${k} of ${n}` : `${k - n} of ${total - n}`;
+        if (!desc(at).includes(want)) res.behaviour.push(`step ${k} from ${hub} is described as "${desc(at)}", not "${want}"`);
+      }
+    }
+    map.select(null, { focus: false });
+  } catch (e) { res.behaviour.push(`keyboard steps check threw ${e.name}: ${e.message}`); }
   // Visibility: a node selected with focus, or reached with an arrow key, ends up on screen, inside
   // the board's sideways scroll and not under the detail drawer (the sticky panel below the board).
   res.hidden = [];

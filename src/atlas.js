@@ -38,7 +38,16 @@ const DEFAULT_LABELS = {
   selfLoop: "Feeds back into itself",
   board: "Map",       // accessible name of the board when the board has no meta.title
   detail: "Detail",   // accessible name of the detail panel
+  // Keyboard steps through the selected node's connections ({n}, {total}, {hub} are filled in).
+  inStep: "Incoming {n} of {total} into {hub}",
+  outStep: "Outgoing {n} of {total} from {hub}",
+  noneIn: "{hub}: no incoming connections",
+  noneOut: "{hub}: no outgoing connections",
+  noneAll: "{hub}: no connections",
+  cleared: "Selection cleared",
+  keys: "Arrow keys move between nodes; Enter selects. Alt with Down or Up steps through the selected node's connections, Alt with Right or Left through its outgoing or incoming ones. Escape goes back to it, then clears the selection.",
 };
+let UID = 0;   // a prefix per map for the ids of its descriptions (unique in the page without a shadow root)
 
 export class Atlas extends EventTarget {
   /**
@@ -261,9 +270,14 @@ export class Atlas extends EventTarget {
 
   /** Selects a node (or null), shows its wires and its detail. */
   select(id, { focus = true, animate = this.options.animate } = {}) {
+    this._select(id, { focus, animate }, true);
+  }
+
+  _select(id, { focus = true, animate = this.options.animate } = {}, announce = true) {
     if (this._destroyed) return;
     if (id !== null && !this._els.has(id)) id = null;
     const prev = this._selected;
+    if (id !== prev) this._ring = null;   // keyboard steps belong to one selection
     this._selected = id;
     this._highlight();
     this._fillPanel();
@@ -274,7 +288,7 @@ export class Atlas extends EventTarget {
     else this._paint(animate);
     if (id !== null) this._setTabStop(id, focus);
     if (prev !== id) this._emit("select", { id });
-    this._announce(id === null ? "" : this._summary(id));
+    if (announce) this._announce(id === null ? "" : this._summary(id));
   }
 
   /** Finishes any running transition at once (its end state) and redraws the wires. */
@@ -398,6 +412,19 @@ export class Atlas extends EventTarget {
     this._wrap.append(this._boardWrap, this._panel, this._status);
     this.root.replaceChildren(style, this._wrap);
     this._board.addEventListener("keydown", e => this._onKey(e));
+    // Alt with Left or Right is Back or Forward in Chrome and Edge on Windows and Linux: inside the
+    // map it never leaves the page.
+    this._wrap.addEventListener("keydown", e => { if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) e.preventDefault(); });
+    // Descriptions read with the focused node (its relation to the selection) and with the board
+    // (the keys), from hidden text.
+    this._uid = `atlas${++UID}`;
+    this._descs = el("div", "descs");
+    this._descs.hidden = true;
+    this._keysHint = el("span");
+    this._keysHint.id = `${this._uid}-keys`;
+    this._descs.append(this._keysHint);
+    this._wrap.append(this._descs);
+    this._board.setAttribute("aria-describedby", this._keysHint.id);
     this._ro = new ResizeObserver(() => this._schedule());
     this._ro.observe(this._board);
     this._ro.observe(this.host);
@@ -434,11 +461,12 @@ export class Atlas extends EventTarget {
   _render({ animate = false, diff = null } = {}) {
     if (this._destroyed) return;
     this._board.setAttribute("aria-label", this._model.meta.title || this.labels.board);
+    this._keysHint.textContent = this.labels.keys;
     this._panel.setAttribute("aria-label", this.labels.detail);
     // The selection follows the board: a node that is gone (removed, renamed by undo, another board
     // loaded) is no longer selected, and listeners hear it.
     const lost = this._selected !== null && !this._model.nodes.some(n => n.id === this._selected);
-    if (lost) this._selected = null;
+    if (lost) { this._selected = null; this._ring = null; }
     const active = this._active();
     const hadFocus = active !== null && this._board.contains(active);
     // Motion: none with animate: false; under reduced motion only cues that do not travel.
@@ -847,6 +875,77 @@ export class Atlas extends EventTarget {
       if (nid === id) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current");
     }
     this._board.classList.toggle("has-selection", id !== null);
+    this._describe();
+  }
+
+  /** The selected node's neighbours, each once, in reading order: { in, out, all, self }. */
+  _star(hub) {
+    const rank = new Map(this._ordered().map((id, i) => [id, i]));
+    const group = dir => {
+      const by = new Map();
+      for (const e of this._model.edges) {
+        if (e.from === e.to) continue;
+        const other = dir === "out" ? (e.from === hub ? e.to : null) : (e.to === hub ? e.from : null);
+        if (other === null) continue;
+        if (!by.has(other)) by.set(other, { id: other, dir, edges: [] });
+        by.get(other).edges.push(e);
+      }
+      return [...by.values()].sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0));
+    };
+    const ins = group("in"), outs = group("out");
+    return { in: ins, out: outs, all: [...ins, ...outs], self: this._model.edges.some(e => e.from === hub && e.to === hub) };
+  }
+
+  _title(id) { return this._model.nodes.find(n => n.id === id)?.title ?? id; }
+
+  /** Each neighbour of the selection is described by its relation to it ("Incoming 3 of 5 into
+   *  Triage: silences"), read when keyboard focus reaches it; the selection by its summary. */
+  _describe() {
+    const texts = new Map();
+    const hub = this._selected;
+    if (hub !== null && this._els.has(hub)) {
+      const s = this._star(hub), name = this._title(hub);
+      const say = (x, i, list, template) => {
+        const what = x.edges.flatMap(e => [e.label, e.details]).filter(t => typeof t === "string" && t).join(", ");
+        const t = fill(template, { n: i + 1, total: list.length, hub: name }) + (what ? `: ${what}` : "");
+        texts.set(x.id, texts.has(x.id) ? `${texts.get(x.id)}; ${t}` : t);
+      };
+      s.in.forEach((x, i) => say(x, i, s.in, this.labels.inStep));
+      s.out.forEach((x, i) => say(x, i, s.out, this.labels.outStep));
+      texts.set(hub, this._summary(hub));
+    }
+    const spans = [this._keysHint];
+    let k = 0;
+    for (const [id, b] of this._els) {
+      const t = texts.get(id);
+      if (!t) { b.removeAttribute("aria-describedby"); continue; }
+      const span = el("span");
+      span.id = `${this._uid}-d${k++}`;
+      span.textContent = t;
+      spans.push(span);
+      b.setAttribute("aria-describedby", span.id);
+    }
+    this._descs.replaceChildren(...spans);
+  }
+
+  /** The next connection of the selection in `group` ("all", "in", "out"), from the focused node.
+   *  A node reached some other way first becomes the selection. Null when there is none. */
+  _step(focused, group, delta) {
+    const r = this._ring;
+    if (!(r && r.hub === this._selected && (focused === r.hub || focused === r.at?.id))) {
+      if (this._selected !== focused) this._select(focused, { focus: false }, false);
+      this._ring = { hub: focused, at: null };
+    }
+    const { hub, at } = this._ring;
+    const list = this._star(hub)[group];
+    if (!list.length) {
+      this._announce(fill(this.labels[{ in: "noneIn", out: "noneOut", all: "noneAll" }[group]], { hub: this._title(hub) }));
+      return null;
+    }
+    const i = at?.id === focused ? list.findIndex(x => x.id === at.id && x.dir === at.dir) : -1;
+    const j = i < 0 ? (delta > 0 ? 0 : list.length - 1) : (i + delta + list.length) % list.length;
+    this._ring.at = list[j];
+    return list[j].id;
   }
 
   _fillPanel() {
@@ -889,9 +988,12 @@ export class Atlas extends EventTarget {
       box.append(t, ul);
       kids.push(box);
     };
+    // In reading order of the other node, the order of the keyboard's steps.
+    const rank = new Map(this._ordered().map((x, i) => [x, i]));
+    const byOther = other => (a, b) => (rank.get(other(a)) ?? 0) - (rank.get(other(b)) ?? 0);
     const edges = this._model.edges;
-    rel("in", edges.filter(e => e.to === id && e.from !== id), e => e.from);
-    rel("out", edges.filter(e => e.from === id && e.to !== id), e => e.to);
+    rel("in", edges.filter(e => e.to === id && e.from !== id).sort(byOther(e => e.from)), e => e.from);
+    rel("out", edges.filter(e => e.from === id && e.to !== id).sort(byOther(e => e.to)), e => e.to);
     if (edges.some(e => e.from === id && e.to === id)) {
       const s = el("p", "p-sub");
       s.textContent = this.labels.selfLoop;
@@ -1233,19 +1335,37 @@ export class Atlas extends EventTarget {
     const id = this._idOf.get(b);
     if (id === undefined) return;
     const L = this._layout;
+    const key = e.key;
+    // Alt and an arrow: step through the selection's connections (a node reached some other way
+    // becomes the selection first). Down and Up: all of them; Right: outgoing, Left: incoming (the
+    // other way round when the flow goes left).
+    if (e.altKey && !e.ctrlKey && !e.metaKey && key in ARROWS) {
+      e.preventDefault();
+      const forward = L.direction === "left" ? "ArrowLeft" : "ArrowRight";
+      const [group, delta] = key === "ArrowDown" ? ["all", 1] : key === "ArrowUp" ? ["all", -1] : key === forward ? ["out", 1] : ["in", 1];
+      const next = this._step(id, group, delta);
+      if (next === id) this._announce(this._descs.querySelector(`#${CSS.escape(b.getAttribute("aria-describedby") ?? "")}`)?.textContent ?? "");
+      else if (next) this._setTabStop(next, true);
+      return;
+    }
+    if (key === "Escape") {
+      // From a connection, back to the selection; on the selection, clear it.
+      e.preventDefault();
+      this._ring = null;
+      if (this._selected !== null && id !== this._selected) { this._setTabStop(this._selected, true); return; }
+      if (this._selected !== null) { this.select(null); this._announce(this.labels.cleared); }
+      return;
+    }
     const lanes = [L.before, ...L.flow, L.after].filter(Boolean).map(l => L.order.get(l.id));
     const li = lanes.findIndex(ids => ids.includes(id));
     let next = null;
-    const key = e.key;
-    if (e.altKey && (key === "ArrowRight" || key === "ArrowDown")) next = this._model.edges.find(x => x.from === id && x.to !== id)?.to ?? null;
-    else if (e.altKey && (key === "ArrowLeft" || key === "ArrowUp")) next = this._model.edges.find(x => x.to === id && x.from !== id)?.from ?? null;
-    else if (key in ARROWS) next = this._nearest(id, ARROWS[key]);
+    if (key in ARROWS) next = this._nearest(id, ARROWS[key]);
     else if (key === "Home") next = lanes[li][0];
     else if (key === "End") next = lanes[li][lanes[li].length - 1];
-    else if (key === "Escape") { this.select(null); e.preventDefault(); return; }
     else return;
     e.preventDefault();
-    if (next) { this._setTabStop(next, true); }
+    this._ring = null;
+    if (next) this._setTabStop(next, true);
   }
 
   /** The node on screen nearest to `id` in direction [dx, dy], preferring the same row or column. */
