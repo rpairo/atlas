@@ -1,0 +1,722 @@
+{
+  "format": "atlas/1",
+  "meta": {
+    "title": "Incident response",
+    "lang": "en",
+    "direction": "right",
+    "selected": "k_triage",
+    "ordered": true
+  },
+  "lanes": [
+    {
+      "id": "controls",
+      "title": "What people trigger",
+      "kind": "before"
+    },
+    {
+      "id": "signals",
+      "title": "Signals"
+    },
+    {
+      "id": "detect",
+      "title": "Detection"
+    },
+    {
+      "id": "decide",
+      "title": "Decisions"
+    },
+    {
+      "id": "act",
+      "title": "Actions"
+    },
+    {
+      "id": "platform",
+      "title": "Platform",
+      "kind": "after"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "c_maint",
+      "title": "Maintenance window",
+      "subtitle": "planned work",
+      "details": [
+        "Silences alerts for the services it lists.",
+        "Always has an end time: nothing stays silenced forever."
+      ],
+      "lane": "controls"
+    },
+    {
+      "id": "c_freeze",
+      "title": "Deploy freeze",
+      "subtitle": "stops every pipeline",
+      "details": [
+        "Set by the commander, by a SEV1, or by a rollback while it runs.",
+        "Lifted by hand once the incident is resolved."
+      ],
+      "lane": "controls"
+    },
+    {
+      "id": "c_page",
+      "title": "Manual page",
+      "subtitle": "anyone can page on-call",
+      "details": [
+        "A button in the chat tool and on the status dashboard.",
+        "Opens an incident with the reporter as first contact."
+      ],
+      "lane": "controls"
+    },
+    {
+      "id": "c_severity",
+      "title": "Severity selector",
+      "subtitle": "SEV1 · SEV2 · SEV3",
+      "details": [
+        "SEV1: customers cannot use the product. SEV2: a feature is degraded. SEV3: no customer impact yet.",
+        "A severity chosen by hand always wins over the computed one."
+      ],
+      "lane": "controls"
+    },
+    {
+      "id": "c_ack",
+      "title": "Acknowledge",
+      "subtitle": "on-call takes the incident",
+      "details": [
+        "Stops the escalation timer.",
+        "The responder is incident commander until they hand over."
+      ],
+      "lane": "controls"
+    },
+    {
+      "id": "c_runbook",
+      "title": "Runbook buttons",
+      "subtitle": "scripted fixes",
+      "details": [
+        "Restart a service, fail over a database, roll back, add capacity.",
+        "Every run is written to the incident timeline."
+      ],
+      "lane": "controls"
+    },
+    {
+      "id": "s_logs",
+      "title": "Logs",
+      "subtitle": "structured, one line per request",
+      "details": [
+        "Error lines are counted by fingerprint.",
+        "Kept for 14 days."
+      ],
+      "lane": "signals"
+    },
+    {
+      "id": "s_metrics",
+      "title": "Metrics",
+      "subtitle": "latency, errors, saturation",
+      "details": [
+        "Scraped every 15 seconds from every service.",
+        "The four golden signals, per endpoint."
+      ],
+      "lane": "signals"
+    },
+    {
+      "id": "s_probes",
+      "title": "Synthetic probes",
+      "subtitle": "checks from three regions",
+      "details": [
+        "Log in, search and check out, every minute.",
+        "A probe failing from two regions counts; one region alone may be the network."
+      ],
+      "lane": "signals"
+    },
+    {
+      "id": "s_reports",
+      "title": "Customer reports",
+      "subtitle": "tickets and the status page",
+      "details": [
+        "Tickets tagged “outage” are counted per hour.",
+        "Status page subscribers can report a problem."
+      ],
+      "lane": "signals"
+    },
+    {
+      "id": "s_deploys",
+      "title": "Deploy events",
+      "subtitle": "what changed, and when",
+      "details": [
+        "Every rollout publishes service, version and author.",
+        "Feature flag flips are published too."
+      ],
+      "lane": "signals"
+    },
+    {
+      "id": "d_dedupe",
+      "title": "Deduplication",
+      "subtitle": "one incident, not fifty alerts",
+      "details": [
+        "Alerts with the same service and symptom join the open incident.",
+        "A new symptom opens a new incident."
+      ],
+      "lane": "detect"
+    },
+    {
+      "id": "d_anomaly",
+      "title": "Anomaly detection",
+      "subtitle": "unusual for this hour",
+      "details": [
+        "Compares each metric with the same hour a week earlier.",
+        "Never pages on its own: it only adds a hint."
+      ],
+      "lane": "detect"
+    },
+    {
+      "id": "d_slo",
+      "title": "SLO burn rate",
+      "subtitle": "error budget spent too fast",
+      "details": [
+        "Fast burn: 2 % of the monthly budget in one hour.",
+        "Slow burn: 10 % in six hours."
+      ],
+      "lane": "detect"
+    },
+    {
+      "id": "d_impact",
+      "title": "Customer impact",
+      "subtitle": "who is affected",
+      "details": [
+        "Probes, tickets and errors per region and per plan.",
+        "Decides whether the status page has to speak."
+      ],
+      "lane": "detect"
+    },
+    {
+      "id": "d_correlate",
+      "title": "Change correlation",
+      "subtitle": "did a deploy cause it?",
+      "details": [
+        "Links an alert to deploys of the same service in the previous 30 minutes.",
+        "Shown on the incident as the likely cause."
+      ],
+      "lane": "detect"
+    },
+    {
+      "id": "k_escalation",
+      "title": "Escalation policy",
+      "subtitle": "who is woken up",
+      "details": [
+        "Primary on-call first; secondary after 10 minutes without an acknowledgement.",
+        "A SEV1 also pages the engineering manager at once."
+      ],
+      "lane": "decide"
+    },
+    {
+      "id": "k_triage",
+      "title": "Triage",
+      "subtitle": "open, merge or drop",
+      "details": [
+        "Opens an incident for a manual page, a fast burn or an outage tag.",
+        "Merges duplicates; drops alerts inside a maintenance window."
+      ],
+      "lane": "decide"
+    },
+    {
+      "id": "k_resolve",
+      "title": "Resolution",
+      "subtitle": "when it is over",
+      "details": [
+        "Resolved when the signals stay healthy for 15 minutes.",
+        "Reopens if the same symptom returns within an hour."
+      ],
+      "lane": "decide"
+    },
+    {
+      "id": "k_severity",
+      "title": "Severity",
+      "subtitle": "how bad it is",
+      "details": [
+        "Starts from customer impact.",
+        "The commander can override it with the severity selector."
+      ],
+      "lane": "decide"
+    },
+    {
+      "id": "k_comms",
+      "title": "Communication plan",
+      "subtitle": "what to say, and to whom",
+      "details": [
+        "SEV1 and SEV2 update the status page every 30 minutes.",
+        "Internal updates go to the incident channel."
+      ],
+      "lane": "decide"
+    },
+    {
+      "id": "k_rollback",
+      "title": "Rollback advisor",
+      "subtitle": "undo the last change?",
+      "details": [
+        "Suggests a rollback when the change correlation is strong.",
+        "Never suggests one during a database migration."
+      ],
+      "lane": "decide"
+    },
+    {
+      "id": "k_autoremed",
+      "title": "Auto-remediation",
+      "subtitle": "known problem, known fix",
+      "details": [
+        "Runs a runbook when a symptom matches one exactly.",
+        "Gives up after two attempts and pages a human."
+      ],
+      "lane": "decide"
+    },
+    {
+      "id": "k_review",
+      "title": "Post-incident review",
+      "subtitle": "learning, not blame",
+      "details": [
+        "Required for SEV1 and SEV2.",
+        "Collects the timeline, the decisions and the follow-up tasks."
+      ],
+      "lane": "decide"
+    },
+    {
+      "id": "a_pager",
+      "title": "Pager",
+      "subtitle": "phone, SMS and push",
+      "details": [
+        "Repeats every 2 minutes until someone acknowledges.",
+        "Ignores do-not-disturb for a SEV1."
+      ],
+      "lane": "act"
+    },
+    {
+      "id": "a_channel",
+      "title": "Incident channel",
+      "subtitle": "one per incident",
+      "details": [
+        "Created with the timeline, the likely cause and the runbooks.",
+        "Archived after the review."
+      ],
+      "lane": "act"
+    },
+    {
+      "id": "a_status",
+      "title": "Status page",
+      "subtitle": "public updates",
+      "details": [
+        "Drafted from the customer impact; a person publishes it.",
+        "Subscribers get each update by email."
+      ],
+      "lane": "act"
+    },
+    {
+      "id": "a_rollback",
+      "title": "Rollback",
+      "subtitle": "previous version, every region",
+      "details": [
+        "Blue-green: traffic moves back in under a minute.",
+        "Sets the deploy freeze while it runs."
+      ],
+      "lane": "act"
+    },
+    {
+      "id": "a_scale",
+      "title": "Scaling",
+      "subtitle": "more capacity",
+      "details": [
+        "Adds instances when saturation is the symptom.",
+        "Capped, so a loop cannot spend without limit."
+      ],
+      "lane": "act"
+    },
+    {
+      "id": "a_tickets",
+      "title": "Follow-up tickets",
+      "subtitle": "tasks from the review",
+      "details": [
+        "Every action item gets an owner and a due date.",
+        "Open items are listed in the weekly report."
+      ],
+      "lane": "act"
+    },
+    {
+      "id": "p_store",
+      "title": "Time-series store",
+      "subtitle": "metrics and events",
+      "details": [
+        "13 months of history, downsampled after 30 days.",
+        "Backs every graph on the incident channel."
+      ],
+      "lane": "platform"
+    },
+    {
+      "id": "p_oncall",
+      "title": "On-call schedule",
+      "subtitle": "rotations and overrides",
+      "details": [
+        "Weekly rotations with a primary and a secondary.",
+        "Overrides for holidays and swaps."
+      ],
+      "lane": "platform"
+    },
+    {
+      "id": "p_config",
+      "title": "Configuration repository",
+      "subtitle": "alerts and policies as code",
+      "details": [
+        "Alert rules, escalation policies and runbooks are reviewed like any code change.",
+        "Merged changes apply within a minute."
+      ],
+      "lane": "platform"
+    },
+    {
+      "id": "p_audit",
+      "title": "Audit log",
+      "subtitle": "who did what",
+      "details": [
+        "Every acknowledgement, override, runbook run and rollback.",
+        "Append-only and kept for a year."
+      ],
+      "lane": "platform"
+    },
+    {
+      "id": "p_queue",
+      "title": "Event bus",
+      "subtitle": "every signal passes through it",
+      "details": [
+        "Signals, alerts and actions are events with a schema.",
+        "Consumers can replay the last 7 days."
+      ],
+      "lane": "platform"
+    }
+  ],
+  "edges": [
+    {
+      "from": "c_page",
+      "to": "k_triage",
+      "label": "opens an incident"
+    },
+    {
+      "from": "c_ack",
+      "to": "k_escalation",
+      "label": "stops the timer"
+    },
+    {
+      "from": "c_ack",
+      "to": "c_severity",
+      "label": "commander sets"
+    },
+    {
+      "from": "c_severity",
+      "to": "k_severity",
+      "label": "overrides"
+    },
+    {
+      "from": "c_severity",
+      "to": "c_freeze",
+      "label": "SEV1 freezes"
+    },
+    {
+      "from": "c_freeze",
+      "to": "s_deploys",
+      "label": "no new rollouts"
+    },
+    {
+      "from": "c_maint",
+      "to": "k_triage",
+      "label": "silences"
+    },
+    {
+      "from": "c_maint",
+      "to": "d_slo",
+      "label": "left out of the budget"
+    },
+    {
+      "from": "c_runbook",
+      "to": "a_rollback",
+      "label": "roll back"
+    },
+    {
+      "from": "c_runbook",
+      "to": "a_scale",
+      "label": "add capacity"
+    },
+    {
+      "from": "s_metrics",
+      "to": "d_slo",
+      "label": "error ratio"
+    },
+    {
+      "from": "s_metrics",
+      "to": "d_anomaly",
+      "label": "every series"
+    },
+    {
+      "from": "s_metrics",
+      "to": "k_autoremed",
+      "label": "saturation"
+    },
+    {
+      "from": "s_metrics",
+      "to": "p_store",
+      "label": "stored"
+    },
+    {
+      "from": "s_logs",
+      "to": "d_anomaly",
+      "label": "error fingerprints"
+    },
+    {
+      "from": "s_logs",
+      "to": "d_dedupe",
+      "label": "symptom"
+    },
+    {
+      "from": "s_logs",
+      "to": "p_store",
+      "label": "indexed"
+    },
+    {
+      "from": "s_probes",
+      "to": "d_slo",
+      "label": "availability"
+    },
+    {
+      "from": "s_probes",
+      "to": "d_impact",
+      "label": "failing regions"
+    },
+    {
+      "from": "s_probes",
+      "to": "s_logs",
+      "label": "trace ids"
+    },
+    {
+      "from": "s_deploys",
+      "to": "d_correlate",
+      "label": "recent changes"
+    },
+    {
+      "from": "s_deploys",
+      "to": "s_metrics",
+      "label": "annotates graphs"
+    },
+    {
+      "from": "s_reports",
+      "to": "d_impact",
+      "label": "tickets per hour"
+    },
+    {
+      "from": "s_reports",
+      "to": "k_triage",
+      "label": "outage tag"
+    },
+    {
+      "from": "d_slo",
+      "to": "k_triage",
+      "label": "fast burn"
+    },
+    {
+      "from": "d_slo",
+      "to": "d_dedupe",
+      "label": "alert"
+    },
+    {
+      "from": "d_slo",
+      "to": "d_impact",
+      "label": "budget spent"
+    },
+    {
+      "from": "d_slo",
+      "to": "k_resolve",
+      "label": "healthy again"
+    },
+    {
+      "from": "d_anomaly",
+      "to": "d_correlate",
+      "label": "hint"
+    },
+    {
+      "from": "d_anomaly",
+      "to": "a_channel",
+      "label": "hint on the timeline"
+    },
+    {
+      "from": "d_correlate",
+      "to": "k_rollback",
+      "label": "likely cause"
+    },
+    {
+      "from": "d_correlate",
+      "to": "k_autoremed",
+      "label": "known cause"
+    },
+    {
+      "from": "d_correlate",
+      "to": "a_channel",
+      "label": "likely cause"
+    },
+    {
+      "from": "d_dedupe",
+      "to": "k_triage",
+      "label": "one alert per symptom"
+    },
+    {
+      "from": "d_impact",
+      "to": "k_severity",
+      "label": "computed severity"
+    },
+    {
+      "from": "d_impact",
+      "to": "k_comms",
+      "label": "who to tell"
+    },
+    {
+      "from": "d_impact",
+      "to": "a_status",
+      "label": "affected regions"
+    },
+    {
+      "from": "k_triage",
+      "to": "k_severity",
+      "label": "new incident"
+    },
+    {
+      "from": "k_triage",
+      "to": "a_channel",
+      "label": "creates"
+    },
+    {
+      "from": "k_severity",
+      "to": "k_escalation",
+      "label": "who to wake"
+    },
+    {
+      "from": "k_severity",
+      "to": "k_comms",
+      "label": "update cadence"
+    },
+    {
+      "from": "k_escalation",
+      "to": "a_pager",
+      "label": "pages"
+    },
+    {
+      "from": "k_escalation",
+      "to": "a_channel",
+      "label": "adds responders"
+    },
+    {
+      "from": "k_escalation",
+      "to": "p_oncall",
+      "label": "looks up"
+    },
+    {
+      "from": "k_rollback",
+      "to": "a_rollback",
+      "label": "recommends"
+    },
+    {
+      "from": "k_autoremed",
+      "to": "a_scale",
+      "label": "scales out"
+    },
+    {
+      "from": "k_autoremed",
+      "to": "k_escalation",
+      "label": "gives up"
+    },
+    {
+      "from": "k_comms",
+      "to": "a_status",
+      "label": "drafts"
+    },
+    {
+      "from": "k_comms",
+      "to": "a_channel",
+      "label": "internal updates"
+    },
+    {
+      "from": "k_resolve",
+      "to": "k_review",
+      "label": "SEV1 and SEV2"
+    },
+    {
+      "from": "k_resolve",
+      "to": "a_status",
+      "label": "resolved notice"
+    },
+    {
+      "from": "k_review",
+      "to": "a_tickets",
+      "label": "action items"
+    },
+    {
+      "from": "k_review",
+      "to": "p_config",
+      "label": "tunes alerts"
+    },
+    {
+      "from": "a_pager",
+      "to": "c_ack",
+      "label": "asks to acknowledge"
+    },
+    {
+      "from": "a_pager",
+      "to": "a_channel",
+      "label": "joins"
+    },
+    {
+      "from": "a_rollback",
+      "to": "c_freeze",
+      "label": "sets the freeze"
+    },
+    {
+      "from": "a_rollback",
+      "to": "a_channel",
+      "label": "posts progress"
+    },
+    {
+      "from": "a_rollback",
+      "to": "p_audit",
+      "label": "logged"
+    },
+    {
+      "from": "a_scale",
+      "to": "d_anomaly",
+      "label": "expected change"
+    },
+    {
+      "from": "a_scale",
+      "to": "p_audit",
+      "label": "logged"
+    },
+    {
+      "from": "a_channel",
+      "to": "p_audit",
+      "label": "timeline kept"
+    },
+    {
+      "from": "a_tickets",
+      "to": "p_config",
+      "label": "fixes land"
+    },
+    {
+      "from": "p_queue",
+      "to": "p_store",
+      "label": "writes"
+    },
+    {
+      "from": "p_queue",
+      "to": "p_audit",
+      "label": "every event"
+    },
+    {
+      "from": "p_config",
+      "to": "p_queue",
+      "label": "routing rules"
+    },
+    {
+      "from": "p_config",
+      "to": "p_oncall",
+      "label": "rotations as code"
+    }
+  ]
+}

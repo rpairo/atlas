@@ -1,0 +1,238 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rpairo.github.io/atlas/schema/atlas-board.schema.json",
+  "title": "Atlas board",
+  "description": "A board for Atlas (https://github.com/rpairo/atlas): lanes, nodes, edges, groups and constraints. See docs/board-format.md.",
+  "type": "object",
+  "properties": {
+    "format": {
+      "const": "atlas/1"
+    },
+    "meta": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "direction": {
+          "enum": [
+            "right",
+            "down",
+            "left",
+            "up"
+          ]
+        },
+        "selected": {
+          "$ref": "#/$defs/id"
+        },
+        "lang": {
+          "type": "string"
+        },
+        "ordered": {
+          "type": "boolean",
+          "description": "true once Atlas has tidied the board; the node order is then kept as is"
+        }
+      }
+    },
+    "lanes": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "kind": {
+            "enum": [
+              "flow",
+              "before",
+              "after"
+            ],
+            "default": "flow"
+          }
+        }
+      }
+    },
+    "groups": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "parent": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "maxItems": 300,
+      "items": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "subtitle": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "details": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "lane": {
+            "$ref": "#/$defs/id"
+          },
+          "group": {
+            "$ref": "#/$defs/id"
+          },
+          "type": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Your own category; a value matching ^[A-Za-z0-9_-]{1,32}$ also adds the CSS part node-<type>."
+          },
+          "pinned": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:#>-]{0,140}$"
+          },
+          "from": {
+            "$ref": "#/$defs/id"
+          },
+          "to": {
+            "$ref": "#/$defs/id"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "details": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "a",
+              "b"
+            ],
+            "properties": {
+              "type": {
+                "const": "before"
+              },
+              "a": {
+                "$ref": "#/$defs/id"
+              },
+              "b": {
+                "$ref": "#/$defs/id"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "type",
+              "node"
+            ],
+            "properties": {
+              "type": {
+                "enum": [
+                  "first",
+                  "last"
+                ]
+              },
+              "node": {
+                "$ref": "#/$defs/id"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "edgeTypes": {
+      "type": "object"
+    },
+    "nodeTypes": {
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$",
+      "not": {
+        "enum": [
+          "__proto__",
+          "constructor",
+          "prototype"
+        ]
+      }
+    }
+  }
+}

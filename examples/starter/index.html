@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>My first Atlas map</title>
+<!--
+  A complete page to copy. Outside this repository, replace the src below with a pinned CDN copy:
+  https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.2.0/dist/atlas.js
+-->
+<script type="module" src="../../dist/atlas.js"></script>
+<style>
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: #f1f4f7; color: #132033; }
+  @media (prefers-color-scheme: dark) { body { background: #0c141e; color: #e3eaf2; } }
+  main { max-width: 1100px; margin: 0 auto; padding: 32px 16px; }
+  h1 { margin: 0 0 16px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sign-up flow</h1>
+  <atlas-map selected="check">
+    <script type="application/json">
+      {
+        "format": "atlas/1",
+        "lanes": [
+          { "id": "in", "title": "Inputs" },
+          { "id": "logic", "title": "Logic" },
+          { "id": "out", "title": "Outputs" }
+        ],
+        "nodes": [
+          { "id": "form", "title": "Sign-up form", "subtitle": "web and app", "lane": "in" },
+          { "id": "check", "title": "Validation", "subtitle": "before anything is stored", "lane": "logic",
+            "details": ["The email must be unique.", "Passwords need at least 12 characters."] },
+          { "id": "mail", "title": "Welcome email", "lane": "out" },
+          { "id": "crm", "title": "CRM record", "lane": "out" }
+        ],
+        "edges": [
+          { "from": "form", "to": "check", "label": "submits" },
+          { "from": "check", "to": "mail", "label": "sends" },
+          { "from": "check", "to": "crm", "label": "creates" }
+        ]
+      }
+    </script>
+  </atlas-map>
+</main>
+</body>
+</html>

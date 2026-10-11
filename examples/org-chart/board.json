@@ -1,0 +1,28 @@
+{
+  "format": "atlas/1",
+  "meta": { "title": "Organisation", "direction": "down", "selected": "cto" },
+  "nodes": [
+    { "id": "ceo", "title": "Chief Executive", "subtitle": "A. Rivera" },
+    { "id": "cto", "title": "Technology", "subtitle": "B. Okafor" },
+    { "id": "cfo", "title": "Finance", "subtitle": "C. Lindqvist" },
+    { "id": "coo", "title": "Operations", "subtitle": "D. Tanaka" },
+    { "id": "platform", "title": "Platform", "subtitle": "6 people" },
+    { "id": "product", "title": "Product engineering", "subtitle": "11 people" },
+    { "id": "security", "title": "Security", "subtitle": "3 people" },
+    { "id": "accounting", "title": "Accounting", "subtitle": "4 people" },
+    { "id": "support", "title": "Customer support", "subtitle": "9 people" },
+    { "id": "logistics", "title": "Logistics", "subtitle": "5 people" }
+  ],
+  "edges": [
+    { "from": "ceo", "to": "cto", "label": "reports" },
+    { "from": "ceo", "to": "cfo", "label": "reports" },
+    { "from": "ceo", "to": "coo", "label": "reports" },
+    { "from": "cto", "to": "platform" },
+    { "from": "cto", "to": "product" },
+    { "from": "cto", "to": "security" },
+    { "from": "cfo", "to": "accounting" },
+    { "from": "coo", "to": "support" },
+    { "from": "coo", "to": "logistics" },
+    { "from": "security", "to": "platform", "label": "reviews" }
+  ]
+}

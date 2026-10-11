@@ -1,0 +1,40 @@
+name: Bug report
+description: Something is drawn wrong, an edit fails, or the docs say something the code does not do.
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Atlas version
+      description: Shown as `VERSION`, or in the first line of the dist file.
+      placeholder: 0.2.0
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and operating system
+      placeholder: Firefox 131 on Windows 11
+    validations:
+      required: true
+  - type: input
+    id: width
+    attributes:
+      label: Width of the map's container (px) and direction
+      placeholder: 980 px, direction right
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: board
+    attributes:
+      label: Smallest board that shows it
+      description: The JSON, cut down as far as the problem still shows. Remove anything private.
+      render: json
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps (which node you selected, which edit you made)

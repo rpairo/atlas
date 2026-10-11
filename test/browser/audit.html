@@ -1,0 +1,192 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body { margin: 0; font: 15px/1.5 system-ui, sans-serif; } main { padding: 24px; }</style></head>
+<body><main><div id="host"></div></main>
+<script type="module">
+// Audit: selects every node and checks the wires against the invariants, then runs edits.
+const { Atlas } = await import(new URLSearchParams(location.search).get("dist") ? "../../dist/atlas.js" : "../../src/index.js");
+const q = new URLSearchParams(location.search);
+const board = q.get("board") ?? "../../examples/incident-response/board.json";
+const loops = [];
+window.addEventListener("error", e => { if (String(e.message).includes("ResizeObserver")) loops.push(e.message); });
+const out = (r) => { const pre = document.createElement("pre"); pre.id = "audit"; pre.textContent = JSON.stringify(r); document.body.append(pre); };
+try {
+  document.body.dataset.stage = "fetch";
+  let text = await (await fetch(board)).text();
+  if (q.get("direction")) { const d = JSON.parse(text); d.meta = { ...(d.meta ?? {}), direction: q.get("direction") }; text = JSON.stringify(d); }
+  document.body.dataset.stage = "fetched";
+  const host = document.getElementById("host");
+  // hostvars=1: a page with its own --paper/--sheet/--ink/--rule on :root that themes Atlas with
+  // them from the host element (the case that once made a cycle and left the board unpainted).
+  if (q.get("hostvars")) {
+    document.documentElement.setAttribute("style", "--paper:#fbf7ef;--sheet:#fffdf8;--ink:#201a10;--rule:#d9cdb8");
+    host.setAttribute("style", "--atlas-paper:var(--paper);--atlas-sheet:var(--sheet);--atlas-ink:var(--ink);--atlas-rule:var(--rule)");
+  }
+  const map = new Atlas(host, { document: text, animate: false });
+  document.body.dataset.stage = "constructed";
+  // Headless Chrome stops producing frames when nothing changes; wait with a timer instead.
+  await new Promise(r => setTimeout(r, 100));
+  document.body.dataset.stage = "framed";
+  const res = { width: innerWidth, mode: null, nodes: 0, wires: 0, missing: [], underNode: [], crossings: [], close: [], shortTip: [], outside: [], moved: [], unpainted: [], loops, edits: [] };
+  const wrap = map.root.querySelector(".atlas");
+  res.mode = wrap.dataset.mode;
+  const boardEl = map.root.querySelector(".board");
+  // The theme reaches the board: paper, sheets and rules are painted, not transparent.
+  const clear = c => c === "transparent" || /rgba\(.*,\s*0\)$/.test(c);
+  const node0 = map.root.querySelector(".node");
+  for (const [what, value] of [["board background", getComputedStyle(boardEl).backgroundColor], ["board border", getComputedStyle(boardEl).borderTopColor], ["node background", node0 && getComputedStyle(node0).backgroundColor], ["node border", node0 && getComputedStyle(node0).borderTopColor]]) {
+    if (value && clear(value)) res.unpainted.push(`${what}: ${value}`);
+  }
+  const rects = () => { const B = boardEl.getBoundingClientRect(); return new Map([...map._els].map(([id, b]) => { const r = b.getBoundingClientRect(); return [id, { l: r.left - B.left, r: r.right - B.left, t: r.top - B.top, b: r.bottom - B.top }]; })); };
+  const model = map.toJSON();
+  const ids = model.nodes.map(n => n.id);
+  // Stacked: one column of lanes, nodes at a readable width, nothing on top of anything, the
+  // detail under the selected node.
+  res.stack = [];
+  const stackCheck = id => {
+    if (res.stack.length > 12) return;
+    const B = boardEl.getBoundingClientRect();
+    const boxes = [...map._els].map(([nid, b]) => [nid, b.getBoundingClientRect()]);
+    const panel = map.root.querySelector(".panel");
+    if (panel && !panel.hidden) boxes.push(["(panel)", panel.getBoundingClientRect()]);
+    for (const [nid, r] of boxes) {
+      if (r.left < B.left - 1 || r.right > B.right + 1) res.stack.push(`${id}: ${nid} outside the board`);
+      if (r.width < (B.width - 40) * 0.4) res.stack.push(`${id}: ${nid} too narrow (${Math.round(r.width)} of ${Math.round(B.width)})`);
+    }
+    for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
+      const [a, ra] = boxes[i], [b, rb] = boxes[j];
+      if (Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left) > 2 && Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top) > 2) res.stack.push(`${id}: ${a} over ${b}`);
+    }
+    const sel = map._els.get(id)?.getBoundingClientRect(), pr = panel?.getBoundingClientRect();
+    if (sel && pr && !panel.hidden && pr.top < sel.bottom - 1) res.stack.push(`${id}: the detail is not under the node`);
+  };
+  const base = rects();
+  for (const id of ids) {
+    const t0 = performance.now();
+    map.select(id, { focus: false, animate: false });
+    const ms = performance.now() - t0;
+    if (!res.slowest || ms > res.slowest.ms) res.slowest = { id, ms: Math.round(ms * 10) / 10 };
+    res.nodes++;
+    const now = rects();
+    if (res.mode !== "flow") { stackCheck(id); continue; } // stacked: the detail opens under the node and pushes the rest
+    for (const [nid, r] of now) { const b = base.get(nid); if (Math.abs(r.l - b.l) > 0.5 || Math.abs(r.t - b.t) > 0.5) { res.moved.push(`${id}: ${nid}`); break; } }
+    const pairs = new Set(model.edges.filter(e => e.from !== e.to && (e.from === id || e.to === id)).map(e => e.from + ">" + e.to));
+    const ws = map._wires;
+    res.wires += ws.length;
+    if (ws.length !== pairs.size) res.missing.push(`${id}: ${ws.length}/${pairs.size}`);
+    const B = boardEl.getBoundingClientRect();
+    ws.forEach(w => {
+      const p = w.screen;
+      for (let i = 1; i < p.length; i++) {
+        const a = p[i - 1], b = p[i], L = Math.hypot(b.x - a.x, b.y - a.y);
+        for (let s = 0; s <= L; s += 3) {
+          const x = a.x + (b.x - a.x) * s / L, y = a.y + (b.y - a.y) * s / L;
+          if (x < -1 || y < -1 || x > B.width + 1 || y > B.height + 1) { res.outside.push(`${id}: ${w.from}>${w.to}`); break; }
+          for (const [nid, r] of now) if (x > r.l + 2 && x < r.r - 2 && y > r.t + 2 && y < r.b - 2) { res.underNode.push(`${id}: ${w.from}>${w.to} over ${nid}`); break; }
+        }
+      }
+      const n = p.length, tip = p[n - 1], prev = p[n - 2];
+      const last = Math.hypot(tip.x - prev.x, tip.y - prev.y);
+      if (last < 14) res.shortTip.push(`${id}: ${w.from}>${w.to} (${last.toFixed(1)})`);
+    });
+    const segs = ws.map(w => w.screen.slice(0, -1).map((p, k) => [p, w.screen[k + 1]]));
+    for (let i = 0; i < ws.length; i++) for (let j = i + 1; j < ws.length; j++) {
+      if (ws[i].h === ws[j].h) continue;
+      let c = 0, close = 0;
+      for (const [p, q2] of segs[i]) for (const [r, s] of segs[j]) {
+        const hA = Math.abs(p.y - q2.y) < .5, hB = Math.abs(r.y - s.y) < .5;
+        if (hA !== hB) {
+          const [h1, h2, v1, v2] = hA ? [p, q2, r, s] : [r, s, p, q2];
+          if (v1.x > Math.min(h1.x, h2.x) + .5 && v1.x < Math.max(h1.x, h2.x) - .5 && h1.y > Math.min(v1.y, v2.y) + .5 && h1.y < Math.max(v1.y, v2.y) - .5) c++;
+        } else {
+          const d = hA ? Math.abs(p.y - r.y) : Math.abs(p.x - r.x);
+          const [a1, a2, b1, b2] = hA ? [p.x, q2.x, r.x, s.x] : [p.y, q2.y, r.y, s.y];
+          if (d < 5 && Math.min(Math.max(a1, a2), Math.max(b1, b2)) - Math.max(Math.min(a1, a2), Math.min(b1, b2)) > 2) close++;
+        }
+      }
+      if (c) res.crossings.push(`${id}: ${ws[i].from}>${ws[i].to} x ${ws[j].from}>${ws[j].to}`);
+      if (close) res.close.push(`${id}: ${ws[i].from}>${ws[i].to} || ${ws[j].from}>${ws[j].to}`);
+    }
+  }
+  // A panel under the board (below mode) is a drawer that may overlap it: it must cover the board,
+  // not show through it. Pull it up over the board and look at what is on top.
+  res.covered = [];
+  if (wrap.dataset.panel === "below") {
+    map.select(ids[0], { focus: false, animate: false });
+    const panel = map.root.querySelector(".panel");
+    panel.style.marginTop = "-160px";
+    const r = panel.getBoundingClientRect();
+    for (const [x, y] of [[r.left + 40, r.top + 20], [r.left + r.width / 2, r.top + 60], [r.right - 40, r.top + 100]]) {
+      const hit = map.root.elementFromPoint(x, y);
+      if (hit && !panel.contains(hit)) res.covered.push(`${Math.round(x)},${Math.round(y)}: ${hit.className?.baseVal ?? hit.className}`);
+    }
+    panel.style.marginTop = "";
+  }
+  document.body.dataset.stage = "selected-all";
+  // Edits: add, connect, undo restores the exact document, rename keeps geometry.
+  const before = JSON.stringify(map.toJSON());
+  const lane = map._layout.mode === "auto" ? undefined : (map._layout.flow[1]?.id ?? map._layout.flow[0]?.id);
+  const anchor = ids.find(x => map._layout.laneOf.get(x) === map._layout.flow[0]?.id);
+  map.addNode({ id: "audit_new", title: "Audit node", lane }, { edges: anchor ? [{ from: anchor, to: "audit_new" }] : [] });
+  res.edits.push(map._els.has("audit_new") ? "add: ok" : "add: missing");
+  map.undo();
+  res.edits.push(JSON.stringify(map.toJSON()) === before ? "undo: exact" : "undo: DIFFERENT");
+  map.redo(); map.undo();
+  map.select(null, { focus: false });
+  map.settle(); // headless Chrome does not advance animations without frames
+  const r0 = rects();
+  const victim = ids[0];
+  document.body.dataset.stage = "before-rename";
+  map.renameNode(victim, "audit_renamed");
+  document.body.dataset.stage = "renamed";
+  map.settle();
+  const r1 = rects();
+  const same = [...r0].every(([k, v]) => { const w = r1.get(k === victim ? "audit_renamed" : k); return w && Math.abs(w.l - v.l) < .5 && Math.abs(w.t - v.t) < .5; });
+  if (same) res.edits.push("rename: same geometry");
+  else {
+    const moved = [...r0].map(([k, v]) => { const w = r1.get(k === victim ? "audit_renamed" : k); return w ? `${k}:${(w.l - v.l).toFixed(0)},${(w.t - v.t).toFixed(0)}` : `${k}:gone`; }).filter(s => !s.endsWith(":0,0") && !s.endsWith(":-0,0") && !s.endsWith(":0,-0"));
+    res.edits.push("rename: MOVED " + moved.slice(0, 6).join(" "));
+  }
+  // Behaviour: a refused edit leaves the map usable, undo brings the warnings back in line, arrow
+  // keys move to a node that is on screen in that direction, reorderAll counts what it changes.
+  res.behaviour = [];
+  const live = ids.map(x => (x === victim ? "audit_renamed" : x));
+  const p = live[1] ?? live[0];
+  try { map.renameNode(p, "not a valid id"); res.behaviour.push("rename to an invalid id was accepted"); } catch (e) {
+    if (e.name !== "AtlasError") res.behaviour.push(`refused rename threw ${e.name}`);
+  }
+  try {
+    // Straight after the refusal, before anything redraws: select, then edit.
+    for (const id of live) map.select(id, { focus: false, animate: false });
+    map.select(p, { focus: false, animate: false });
+    if (map.selected !== p) res.behaviour.push("cannot select after a refused rename");
+    map.updateNode(p, { subtitle: "audit" });
+    map.undo();
+  } catch (e) { res.behaviour.push(`map broken after a refused rename: ${e.message}`); }
+  map.connect(p, p);
+  const self = map.warnings.some(w => w.code === "self");
+  map.undo();
+  if (!self || map.warnings.some(w => w.code === "self")) res.behaviour.push("warnings do not follow undo");
+  const centre = id => { const r = map._els.get(id).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+  const arrows = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] };
+  for (const id of live) for (const [key, [dx, dy]] of Object.entries(arrows)) {
+    const b = map._els.get(id);
+    b.focus();
+    b.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, composed: true }));
+    const to = map._idOf.get(map.root.activeElement);
+    if (to === undefined || to === id) continue;
+    const [ax, ay] = centre(id), [bx, by] = centre(to);
+    if ((bx - ax) * dx + (by - ay) * dy <= 0) res.behaviour.push(`${key} from ${id} went to ${to}, which is not that way`);
+  }
+  const dry = map.reorderAll({ dryRun: true }).swaps, revBefore = map.rev;
+  const done = map.reorderAll().swaps;
+  if (dry !== done) res.behaviour.push(`reorderAll counted ${dry} in a dry run and ${done} for real`);
+  if ((done === 0) !== (map.rev === revBefore)) res.behaviour.push("reorderAll changed the revision without changing the order, or the reverse");
+  if (done) map.undo();
+  out(res);
+} catch (e) {
+  out({ error: String(e && e.stack || e) });
+}
+</script>
+</body></html>

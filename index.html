@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atlas · relational maps that place and route themselves</title>
+<meta name="description" content="Atlas is a dependency-free engine for relational maps: nodes, lanes and orthogonal wires that place and route themselves.">
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f1f4f7; --fg: #132033; --muted: #55657c; --rule: #cdd6e1; --link: #2a64a8; --field: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0c141e; --fg: #e3eaf2; --muted: #98a9bd; --rule: #2a3a4e; --link: #6ea8ec; --field: #132030;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0c141e; --fg: #e3eaf2; --muted: #98a9bd; --rule: #2a3a4e; --link: #6ea8ec; --field: #132030;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--fg); }
+  main { max-width: 1320px; margin: 0 auto; padding: 32px clamp(16px, 4vw, 40px) 48px; }
+  header { display: grid; gap: 8px; margin-bottom: 8px; }
+  h1 { margin: 0; font-size: clamp(1.8rem, 4vw, 2.4rem); line-height: 1.1; }
+  .lede { margin: 0; max-width: 72ch; color: var(--muted); }
+  nav { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; }
+  a { color: var(--link); }
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; margin: 20px 0 16px; font-size: 14px; }
+  label { display: flex; gap: 8px; align-items: center; color: var(--muted); }
+  select { font: inherit; color: var(--fg); background: var(--field); border: 1px solid var(--rule); border-radius: 6px; padding: 4px 8px; }
+  #error { color: #c62828; }
+  footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid var(--rule); color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Atlas</h1>
+    <p class="lede">A dependency-free engine for relational maps: nodes, lanes and orthogonal wires that
+      place and route themselves. Select a node to see its wires and its detail; the arrow keys move
+      around the map. Narrow the window to see the map adapt.</p>
+    <nav aria-label="Project">
+      <a href="https://github.com/rpairo/atlas">GitHub</a>
+      <a href="https://github.com/rpairo/atlas/blob/main/docs/getting-started.md">Getting started</a>
+      <a href="https://github.com/rpairo/atlas/blob/main/docs/board-format.md">Board format</a>
+      <a href="https://github.com/rpairo/atlas/blob/main/docs/api.md">API</a>
+      <a href="examples/starter/index.html">Starter page</a>
+    </nav>
+  </header>
+
+  <div class="controls">
+    <label>Example
+      <select id="board">
+        <option value="incident-response">Incident response</option>
+        <option value="dependencies">Module dependencies</option>
+        <option value="state-machine">Order state machine</option>
+        <option value="org-chart">Organisation chart</option>
+      </select>
+    </label>
+    <label>Direction
+      <select id="direction">
+        <option value="">As saved</option>
+        <option value="right">Right</option>
+        <option value="down">Down</option>
+        <option value="left">Left</option>
+        <option value="up">Up</option>
+      </select>
+    </label>
+    <label>Theme
+      <select id="theme">
+        <option value="">System</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </label>
+    <span id="error" role="alert"></span>
+  </div>
+
+  <div id="map"></div>
+
+  <footer>Atlas <span id="version"></span> · MIT License · the boards are fictional examples from <code>examples/</code>.</footer>
+</main>
+
+<script type="module">
+  import { Atlas, VERSION } from "./dist/atlas.js";
+
+  const $ = id => document.getElementById(id);
+  const host = $("map");
+  const choices = { board: $("board"), direction: $("direction"), theme: $("theme") };
+  const allowed = name => [...choices[name].options].map(o => o.value);
+  const params = new URLSearchParams(location.search);
+  for (const [name, select] of Object.entries(choices)) {
+    const value = params.get(name);
+    if (value !== null && allowed(name).includes(value)) select.value = value;
+  }
+  $("version").textContent = VERSION;
+
+  let map = null;
+  async function show() {
+    $("error").textContent = "";
+    try {
+      const response = await fetch(`examples/${choices.board.value}/board.json`);
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      const board = await response.json();
+      if (choices.direction.value) board.meta = { ...board.meta, direction: choices.direction.value };
+      if (map) map.load(board);
+      else map = new Atlas(host, { document: board });
+    } catch (e) {
+      $("error").textContent = `Could not load the example: ${e.message}`;
+    }
+  }
+
+  function applyTheme() {
+    const theme = choices.theme.value;
+    if (theme) { document.documentElement.dataset.theme = theme; host.setAttribute("theme", theme); }
+    else { delete document.documentElement.dataset.theme; host.removeAttribute("theme"); }
+  }
+
+  function remember() {
+    const q = new URLSearchParams();
+    for (const [name, select] of Object.entries(choices)) if (select.value && select.selectedIndex !== 0) q.set(name, select.value);
+    history.replaceState(null, "", q.size ? `?${q}` : location.pathname);
+  }
+
+  choices.board.addEventListener("change", () => { remember(); show(); });
+  choices.direction.addEventListener("change", () => { remember(); show(); });
+  choices.theme.addEventListener("change", () => { remember(); applyTheme(); });
+  applyTheme();
+  show();
+</script>
+</body>
+</html>

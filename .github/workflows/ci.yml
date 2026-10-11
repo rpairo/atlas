@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24, 26]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+      - name: Property tests on 1,000 random boards
+        if: matrix.node == 26
+        run: node --test test/random.test.mjs
+        env:
+          RUNS: "1000"
+
+  dist:
+    name: dist is built from src
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+      - run: npm run build
+      - name: The committed dist matches a fresh build
+        run: git diff --exit-code -- dist
+
+  types:
+    name: type declarations
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+      - name: Type-check the usage file against types/atlas.d.ts
+        run: npx --yes -p typescript@7.0.2 tsc -p test/types
+
+  audit:
+    name: browser audit
+    runs-on: ubuntu-latest
+    env:
+      CHROME: google-chrome
+      # The runner's kernel does not allow Chrome's sandbox; the pages are this repository's own,
+      # served on localhost.
+      CHROME_FLAGS: --no-sandbox
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Example boards, from wide to stacked
+        run: |
+          for board in incident-response dependencies state-machine org-chart; do
+            scripts/audit.sh ../../examples/$board/board.json 1400 900 500
+          done
+      - name: Every direction
+        run: |
+          for direction in left up down; do
+            EXTRA="&direction=$direction" scripts/audit.sh "" 1400 600
+          done
+      - name: The built file, themed from a page with its own variables
+        run: EXTRA="&dist=1&hostvars=1" scripts/audit.sh "" 1400 900 500

@@ -1,0 +1,28 @@
+{
+  "format": "atlas/1",
+  "meta": { "title": "Order lifecycle", "direction": "right", "selected": "paid" },
+  "nodes": [
+    { "id": "draft", "title": "Draft", "subtitle": "cart" },
+    { "id": "placed", "title": "Placed", "subtitle": "awaiting payment" },
+    { "id": "paid", "title": "Paid" },
+    { "id": "packed", "title": "Packed" },
+    { "id": "shipped", "title": "Shipped" },
+    { "id": "delivered", "title": "Delivered" },
+    { "id": "returned", "title": "Returned" },
+    { "id": "refunded", "title": "Refunded" },
+    { "id": "cancelled", "title": "Cancelled" }
+  ],
+  "edges": [
+    { "from": "draft", "to": "placed", "label": "checkout" },
+    { "from": "placed", "to": "paid", "label": "payment ok" },
+    { "from": "placed", "to": "cancelled", "label": "timeout" },
+    { "from": "placed", "to": "draft", "label": "edit cart" },
+    { "from": "paid", "to": "packed", "label": "pick" },
+    { "from": "paid", "to": "refunded", "label": "cancel" },
+    { "from": "packed", "to": "shipped", "label": "hand over" },
+    { "from": "shipped", "to": "delivered", "label": "scan" },
+    { "from": "shipped", "to": "packed", "label": "lost, repack" },
+    { "from": "delivered", "to": "returned", "label": "return" },
+    { "from": "returned", "to": "refunded", "label": "inspect" }
+  ]
+}

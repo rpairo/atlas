@@ -1,0 +1,55 @@
+{
+  "name": "@rpairo/atlas",
+  "version": "0.2.0",
+  "description": "A dependency-free engine for relational maps: nodes, lanes and orthogonal wires that place and route themselves.",
+  "keywords": [
+    "graph-drawing",
+    "diagram",
+    "orthogonal-routing",
+    "layered-layout",
+    "relational-map",
+    "web-components",
+    "custom-elements",
+    "zero-dependency"
+  ],
+  "homepage": "https://rpairo.github.io/atlas/",
+  "bugs": {
+    "url": "https://github.com/rpairo/atlas/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rpairo/atlas.git"
+  },
+  "license": "MIT",
+  "author": "Raúl Pera Pairó (https://github.com/rpairo)",
+  "private": true,
+  "type": "module",
+  "main": "./dist/atlas.js",
+  "types": "./types/atlas.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/atlas.d.ts",
+      "default": "./dist/atlas.js"
+    },
+    "./atlas.global.js": "./dist/atlas.global.js",
+    "./schema.json": "./schema/atlas-board.schema.json",
+    "./package.json": "./package.json"
+  },
+  "sideEffects": [
+    "./dist/atlas.js",
+    "./dist/atlas.global.js"
+  ],
+  "files": [
+    "dist/",
+    "types/",
+    "schema/",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "build": "node scripts/build.mjs"
+  }
+}

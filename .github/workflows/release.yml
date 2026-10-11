@@ -1,0 +1,66 @@
+name: Release
+
+# Pushing a tag vX.Y.Z on a commit of main publishes the GitHub release, with the built files and
+# their Subresource Integrity hashes. See CONTRIBUTING.md, "Releasing".
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+
+      - name: The tag is the package version, on main
+        run: |
+          version=$(node -p 'require("./package.json").version')
+          test "$GITHUB_REF_NAME" = "v$version" || { echo "tag $GITHUB_REF_NAME, package.json $version"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "the tagged commit is not on main"; exit 1; }
+          grep -q "^## \[$version\]" CHANGELOG.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Tests
+        run: npm test
+
+      - name: The committed dist matches a fresh build
+        run: npm run build && git diff --exit-code -- dist
+
+      - name: Release notes with integrity hashes
+        run: |
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          {
+            echo
+            echo "### Files"
+            echo
+            echo "| File | Subresource Integrity |"
+            echo "|---|---|"
+            for f in dist/atlas.js dist/atlas.global.js; do
+              echo "| \`$(basename "$f")\` | \`sha384-$(openssl dgst -sha384 -binary "$f" | openssl base64 -A)\` |"
+            done
+            echo
+            echo "From a CDN: \`https://cdn.jsdelivr.net/gh/rpairo/atlas@v$VERSION/dist/atlas.js\`"
+          } >> notes.md
+          cat notes.md
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "Atlas $VERSION" --notes-file notes.md \
+            dist/atlas.js dist/atlas.global.js types/atlas.d.ts schema/atlas-board.schema.json
