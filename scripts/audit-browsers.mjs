@@ -22,6 +22,7 @@ for (const b of ["incident-response", "dependencies", "state-machine", "org-char
 for (const d of ["left", "up", "down"]) for (const w of [1400, 600]) runs.push({ extra: `&direction=${d}`, w });
 for (const w of [1400, 500]) runs.push({ extra: "&rtl=1", w });
 for (const w of [1100, 500]) runs.push({ w, h: 800 });
+runs.push({ w: 1000, h: 700 }, { w: 932, h: 430 }, { board: "../../examples/state-machine/board.json", w: 1100, h: 800 });
 for (const w of [1400, 900, 500]) runs.push({ extra: "&dist=1&hostvars=1", w });
 for (const w of [1400, 900, 500]) runs.push({ board: "../fixtures/groups.json", w });
 for (const d of ["left", "down"]) runs.push({ board: "../fixtures/groups.json", extra: `&direction=${d}`, w: 1400 });

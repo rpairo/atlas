@@ -81,6 +81,7 @@ export class Atlas extends EventTarget {
     this._cues = [];              // reduced motion: outlines and fades that mark a change
     this._wireEls = new Map();    // wire key → its drawn elements and path
     this._after = null;           // a selection made while nodes moved: paint it when they stop
+    this._sheet = "peek";         // the detail as a sheet: folded to its head, or open
     this._frame = 0;
     this._mount();
     this._model = M.normalize({ nodes: [] });
@@ -143,6 +144,7 @@ export class Atlas extends EventTarget {
     this._history = [];
     this._future = [];
     this._live.clear();
+    this._sheet = "peek";
     this._rev++;
     this._render({ animate: false });
     const first = selected === undefined ? (m.meta.selected ?? null) : selected;
@@ -269,11 +271,12 @@ export class Atlas extends EventTarget {
   }
 
   /** Selects a node (or null), shows its wires and its detail. */
-  select(id, { focus = true, animate = this.options.animate } = {}) {
-    this._select(id, { focus, animate }, true);
+  select(id, { focus = true, animate = this.options.animate, reveal = focus, open } = {}) {
+    if (open !== undefined && !this._destroyed) this._sheet = open ? "open" : "peek";
+    this._select(id, { focus, animate, reveal }, true);
   }
 
-  _select(id, { focus = true, animate = this.options.animate } = {}, announce = true) {
+  _select(id, { focus = true, animate = this.options.animate, reveal = focus } = {}, announce = true) {
     if (this._destroyed) return;
     if (id !== null && !this._els.has(id)) id = null;
     const prev = this._selected;
@@ -286,7 +289,7 @@ export class Atlas extends EventTarget {
     // the nodes are in place.
     if (this._moving()) this._after = { animate };
     else this._paint(animate);
-    if (id !== null) this._setTabStop(id, focus);
+    if (id !== null) this._setTabStop(id, focus, reveal);
     if (prev !== id) this._emit("select", { id });
     if (announce) this._announce(id === null ? "" : this._summary(id));
   }
@@ -310,6 +313,7 @@ export class Atlas extends EventTarget {
     if (this._destroyed) return;
     this._destroyed = true;
     this._ro?.disconnect();
+    removeEventListener("resize", this._onResize);
     cancelAnimationFrame(this._frame);
     clearTimeout(this._saying);
     const running = [...this._animations, ...this._ghostAnims, ...this._cues];
@@ -428,6 +432,10 @@ export class Atlas extends EventTarget {
     this._ro = new ResizeObserver(() => this._schedule());
     this._ro.observe(this._board);
     this._ro.observe(this.host);
+    // The window's height decides between a detail below the board and a sheet: a change of height
+    // alone resizes neither observed box.
+    this._onResize = () => this._schedule();
+    addEventListener("resize", this._onResize);
   }
 
   _schedule() {
@@ -540,6 +548,7 @@ export class Atlas extends EventTarget {
     const reversed = dir === "left" || dir === "up";
     const N = L.flow.length;
     this._wrap.dataset.direction = dir;
+    if (!this.options.animate) this._wrap.dataset.motion = "off"; else delete this._wrap.dataset.motion;
     const board = this._board;
     const keep = new Set(this._model.nodes.map(n => n.id));
     for (const [id, li] of this._items) if (!keep.has(id)) { li.remove(); this._items.delete(id); this._els.delete(id); this._live.delete(id); }
@@ -755,7 +764,12 @@ export class Atlas extends EventTarget {
       b.type = "button";
       b.tabIndex = -1;
       this._idOf.set(b, id);
-      b.addEventListener("click", () => this.select(this._idOf.get(b)));
+      // Activating the selected node again opens the detail when it is a folded sheet.
+      b.addEventListener("click", () => {
+        const id = this._idOf.get(b);
+        if (id === this._selected && this._wrap.dataset.panel === "sheet" && this._sheet !== "open") this.openDetail(true);
+        else this.select(id);
+      });
       li.append(b);
       this._items.set(id, li);
       this._els.set(id, b);
@@ -793,9 +807,21 @@ export class Atlas extends EventTarget {
     // Wires need the lanes side by side. When they do not fit, the board scrolls sideways inside
     // its box; only a really narrow container stacks the lanes.
     const mode = width >= Math.min(needed, STACK_BELOW) ? "flow" : "stack";
-    const panel = this.options.panel === false ? "none" : mode === "stack" ? "inline" : width >= needed + side ? "side" : "below";
+    let panel = this.options.panel === false ? "none" : mode === "stack" ? "inline" : width >= needed + side ? "side" : "below";
+    const before = `${this._wrap.dataset.mode}|${this._wrap.dataset.panel}`;
     if (this._wrap.dataset.mode !== mode) this._wrap.dataset.mode = mode;
+    if (panel === "below") {
+      // Under the board, in the page, when the board and the open detail fit the window together;
+      // otherwise a sheet kept at the foot of the window, folded to its head until it is opened.
+      const vh = innerHeight || 800;
+      const open = Math.min(Math.max(0.42 * vh, 280), vh - 120);
+      if (this._board.getBoundingClientRect().height + PANEL_GAP + open > vh - 24) panel = "sheet";
+    }
     if (this._wrap.dataset.panel !== panel) this._wrap.dataset.panel = panel;
+    if (`${mode}|${panel}` !== before) {
+      if (before !== "undefined|undefined") this._fillPanel();   // a sheet's head is a toggle
+      this._emit("arrange", this.arrangement);
+    }
   }
 
   /** WebKit (Safari) keeps the rows of a grid of subgrids at their old heights when the board gets
@@ -838,6 +864,8 @@ export class Atlas extends EventTarget {
   }
 
   _placePanel() {
+    if (this._wrap.dataset.panel === "sheet") this._panel.dataset.sheet = this._sheet;
+    else delete this._panel.dataset.sheet;
     const inline = this._wrap.dataset.panel === "inline";
     // Inline, the detail goes inside the selected node's <li>: an <ol> holds only <li>s. The class
     // lets that item take a whole row of a two-column band (no :has(), for Firefox before 121).
@@ -955,16 +983,14 @@ export class Atlas extends EventTarget {
     const L = this._layout;
     const laneId = L.laneOf.get(id);
     const lane = [L.before, ...L.flow, L.after].find(l => l && l.id === laneId);
-    const kids = [];
-    const laneTitle = laneId === M.UNASSIGNED ? this.labels.unassigned : (lane?.title ?? "");
-    if (laneTitle) kids.push(txt("p", "p-lane", laneTitle));   // automatic lanes have no title
-    kids.push(txt(this._heading(0), "p-title", n.title ?? n.id));
+    const laneTitle = laneId === M.UNASSIGNED ? this.labels.unassigned : (lane?.title ?? "");   // automatic lanes have none
     const sub = this._live.get(id)?.subtitle ?? n.subtitle;
-    if (sub) kids.push(txt("p", "p-sub", sub));
+    const body = el("div", "p-body");
+    body.id = `${this._uid}-body`;
     if (Array.isArray(n.details) && n.details.length) {
-      const ul = el("ul");
+      const ul = el("ul", "p-details");
       for (const d of n.details) ul.append(txt("li", "", d));
-      kids.push(ul);
+      body.append(ul);
     }
     const rel = (dir, edges, other) => {
       if (!edges.length) return;
@@ -986,20 +1012,79 @@ export class Atlas extends EventTarget {
         ul.append(li);
       }
       box.append(t, ul);
-      kids.push(box);
+      body.append(box);
     };
     // In reading order of the other node, the order of the keyboard's steps.
     const rank = new Map(this._ordered().map((x, i) => [x, i]));
     const byOther = other => (a, b) => (rank.get(other(a)) ?? 0) - (rank.get(other(b)) ?? 0);
     const edges = this._model.edges;
-    rel("in", edges.filter(e => e.to === id && e.from !== id).sort(byOther(e => e.from)), e => e.from);
-    rel("out", edges.filter(e => e.from === id && e.to !== id).sort(byOther(e => e.to)), e => e.to);
-    if (edges.some(e => e.from === id && e.to === id)) {
-      const s = el("p", "p-sub");
-      s.textContent = this.labels.selfLoop;
-      kids.push(s);
+    const ins = edges.filter(e => e.to === id && e.from !== id).sort(byOther(e => e.from));
+    const outs = edges.filter(e => e.from === id && e.to !== id).sort(byOther(e => e.to));
+    rel("in", ins, e => e.from);
+    rel("out", outs, e => e.to);
+    if (edges.some(e => e.from === id && e.to === id)) body.append(txt("p", "p-sub p-self", this.labels.selfLoop));
+    const head = [];
+    if (this._wrap.dataset.panel === "sheet") {
+      // A sheet at the foot of the window: its head is a button that folds and unfolds the rest,
+      // inside the heading (the disclosure pattern of an accordion).
+      const open = this._sheet === "open";
+      const h = el(this._heading(0), "p-title");
+      const toggle = el("button", "p-toggle");
+      toggle.type = "button";
+      toggle.setAttribute("aria-expanded", String(open));
+      toggle.setAttribute("aria-controls", body.id);
+      if (laneTitle) toggle.append(txt("span", "p-lane", laneTitle));
+      toggle.append(txt("span", "p-name", n.title ?? n.id));
+      if (sub) toggle.append(txt("span", "p-sub", sub));
+      const counts = el("span", "p-counts");
+      for (const [dir, list, label] of [["in", ins, this.labels.incoming], ["out", outs, this.labels.outgoing]]) {
+        const c = txt("span", "", `${label}: ${new Set(list.map(e => (dir === "in" ? e.from : e.to))).size}`);
+        c.dataset.dir = dir;
+        counts.append(c);
+      }
+      const chev = document.createElementNS(NS, "svg");
+      chev.setAttribute("class", "p-chev");
+      chev.setAttribute("viewBox", "0 0 16 16");
+      chev.setAttribute("aria-hidden", "true");
+      chev.append(svgEl("path", { d: "M4 10l4-4 4 4" }));
+      toggle.append(counts, chev);
+      toggle.addEventListener("click", () => this.openDetail(this._sheet !== "open"));
+      h.append(toggle);
+      head.push(h);
+    } else {
+      if (laneTitle) head.push(txt("p", "p-lane", laneTitle));
+      head.push(txt(this._heading(0), "p-title", n.title ?? n.id));
+      if (sub) head.push(txt("p", "p-sub", sub));
     }
-    this._panel.replaceChildren(...kids);
+    this._panel.replaceChildren(...head, body);
+  }
+
+  /**
+   * Opens (or, with false, folds) the detail when it is a sheet at the foot of the window, and keeps
+   * the selected node in view above it. Returns "open" or "peek"; the state holds from one selection
+   * to the next, and in the other arrangements it waits for a sheet.
+   */
+  openDetail(open = true) {
+    if (this._destroyed) return this._sheet;
+    const want = open ? "open" : "peek";
+    if (want === this._sheet) return want;
+    this._sheet = want;
+    if (this._wrap.dataset.panel === "sheet") {
+      this._fillPanel();
+      this._placePanel();
+      if (open && this._selected !== null) this._reveal(this._els.get(this._selected));
+      this._emit("arrange", this.arrangement);
+    }
+    return want;
+  }
+
+  /** How the map is laid out now: the board side by side ("flow"), scrolling sideways ("scroll") or
+   *  stacked ("stack"); the detail at the side, below, as a sheet at the foot of the window, inline
+   *  under the node, or none; and the sheet's state. */
+  get arrangement() {
+    const d = this._wrap.dataset;
+    const board = d.mode === "stack" ? "stack" : this._boardWrap.scrollWidth > this._boardWrap.clientWidth + 1 ? "scroll" : "flow";
+    return { board, panel: d.panel ?? "none", sheet: d.panel === "sheet" ? this._sheet : null };
   }
 
   /** "Triage: 5 incoming, 2 outgoing" (other nodes, each counted once), and the self-loop if any. */
@@ -1304,21 +1389,23 @@ export class Atlas extends EventTarget {
     if (first !== undefined && this._els.has(first)) this._els.get(first).tabIndex = 0;
   }
 
-  _setTabStop(id, focus) {
+  _setTabStop(id, focus, reveal = focus) {
     for (const b of this._els.values()) b.tabIndex = -1;
     const b = this._els.get(id);
     b.tabIndex = 0;
-    if (!focus) return;
-    if (this.root.activeElement !== b) b.focus({ preventScroll: true });
-    this._reveal(b);
+    if (focus && this.root.activeElement !== b) b.focus({ preventScroll: true });
+    if (reveal) this._reveal(b);
   }
 
   /** Scrolls a node into view, sideways inside the board too, and above the detail drawer when the
    *  panel below the board covers the foot of the screen. */
   _reveal(b) {
-    const drawer = this._wrap.dataset.panel === "below" && !this._panel.hidden;
-    // The drawer is sticky 12px above the bottom; keep the node another 12px clear of it.
-    b.style.scrollMarginBottom = drawer ? `${Math.ceil(this._panel.getBoundingClientRect().height) + 24}px` : "";
+    const sheet = this._wrap.dataset.panel === "sheet" && !this._panel.hidden;
+    // The sheet stays at the foot of the window: keep the node 12px clear of it. Open, it may still be
+    // growing (its height animates): count it at its largest.
+    const tall = this._sheet === "open" ? Math.min(Math.max(0.42 * innerHeight, 280), innerHeight - 120) + 12 : 0;
+    const reserve = sheet ? Math.max(tall, Math.ceil(innerHeight - this._panel.getBoundingClientRect().top)) + 12 : 0;
+    b.style.scrollMarginBottom = sheet ? `${reserve}px` : "";
     b.scrollIntoView({ block: "nearest", inline: "nearest", behavior: this.options.animate && !reducedMotion() ? "smooth" : "auto" });
   }
 

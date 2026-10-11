@@ -117,11 +117,12 @@ try {
       if (close) res.close.push(`${id}: ${ws[i].from}>${ws[i].to} || ${ws[j].from}>${ws[j].to}`);
     }
   }
-  // A panel under the board (below mode) is a drawer that may overlap it: it must cover the board,
-  // not show through it. Pull it up over the board and look at what is on top.
+  // A sheet at the foot of the window overlaps the board: open, it must cover the board, not show
+  // through it. Pull it up over the board and look at what is on top. Below the board in the page,
+  // the detail never overlaps it.
   res.covered = [];
-  if (wrap.dataset.panel === "below") {
-    map.select(ids[0], { focus: false, animate: false });
+  if (wrap.dataset.panel === "sheet") {
+    map.select(ids[0], { focus: false, animate: false, open: true });
     const panel = map.root.querySelector(".panel");
     panel.style.marginTop = "-160px";
     const r = panel.getBoundingClientRect();
@@ -130,6 +131,13 @@ try {
       if (hit && !panel.contains(hit)) res.covered.push(`${Math.round(x)},${Math.round(y)}: ${hit.className?.baseVal ?? hit.className}`);
     }
     panel.style.marginTop = "";
+    map.openDetail(false);
+  }
+  if (wrap.dataset.panel === "below") {
+    map.select(ids[0], { focus: false, animate: false });
+    const panel = map.root.querySelector(".panel");
+    if (getComputedStyle(panel).position !== "static") res.covered.push(`below the board the detail is ${getComputedStyle(panel).position}`);
+    if (panel.getBoundingClientRect().top < boardEl.getBoundingClientRect().bottom - 1) res.covered.push("below the board the detail overlaps it");
   }
   // Groups: a group never pushes its lane's nodes into a second column (or row), each box holds
   // every member of its span and sits inside its parent's box, and a legend is on nothing (no node,
@@ -321,7 +329,7 @@ try {
   const seen = id => {
     const r = map._els.get(id).getBoundingClientRect(), box = map._boardWrap.getBoundingClientRect();
     const panel = map.root.querySelector(".panel");
-    const foot = wrap.dataset.panel === "below" && !panel.hidden ? Math.min(innerHeight, panel.getBoundingClientRect().top) : innerHeight;
+    const foot = wrap.dataset.panel === "sheet" && !panel.hidden ? Math.min(innerHeight, panel.getBoundingClientRect().top) : innerHeight;
     where = `node ${r.left | 0}-${r.right | 0} x ${r.top | 0}-${r.bottom | 0}, foot ${foot | 0}, box ${box.left | 0}-${box.right | 0}, window ${innerWidth}x${innerHeight}, scrollY ${scrollY | 0} of ${document.documentElement.scrollHeight - innerHeight}`;
     return r.top >= -1 && r.bottom <= foot + 1 && r.left >= Math.max(0, box.left) - 1 && r.right <= Math.min(innerWidth, box.right) + 1;
   };
@@ -337,11 +345,44 @@ try {
     }
   }
   map.select(null, { focus: false });
+  // The sheet: a map that starts with a selection shows it folded to its head and scrolls nothing;
+  // its toggle (at least 44px tall) and a second activation of the selected node open it, within
+  // its height limits; folded, its body takes no focus; open, the selected node sits above it; the
+  // state holds from one selection to the next.
+  if (wrap.dataset.panel === "sheet") {
+    try {
+      const someone = ids.find(x => model.edges.some(e => e.from === x || e.to === x));   // ids of the board as loaded
+      const host9 = document.createElement("div"); document.querySelector("main").append(host9);
+      scrollTo(0, 0);
+      const m9 = new Atlas(host9, { document: text, selected: someone, animate: false });
+      await new Promise(r => setTimeout(r, 100));
+      const p9 = m9.root.querySelector(".panel"), t9 = () => m9.root.querySelector(".p-toggle");
+      const sh = m9.arrangement;
+      if (sh.panel !== "sheet" || sh.sheet !== "peek" || p9.dataset.sheet !== "peek") res.behaviour.push(`a map starting with a selection shows the detail as ${JSON.stringify(sh)}`);
+      if (p9.getBoundingClientRect().height > 56) res.behaviour.push(`the folded sheet is ${Math.round(p9.getBoundingClientRect().height)}px tall`);
+      if (scrollY !== 0) res.behaviour.push(`building the map scrolled the page to ${scrollY}`);
+      if (!t9() || t9().getBoundingClientRect().height < 44) res.behaviour.push("the sheet's toggle is missing or under 44px tall");
+      if (getComputedStyle(m9.root.querySelector(".p-body")).visibility !== "hidden") res.behaviour.push("the folded sheet's body can take focus");
+      t9().click();
+      const limit = Math.min(Math.max(0.42 * innerHeight, 280), innerHeight - 120);
+      if (m9.arrangement.sheet !== "open" || t9().getAttribute("aria-expanded") !== "true") res.behaviour.push("the toggle did not open the sheet");
+      if (p9.getBoundingClientRect().height > limit + 2) res.behaviour.push(`the open sheet is ${Math.round(p9.getBoundingClientRect().height)}px tall, over ${Math.round(limit)}`);
+      const nb = m9._els.get(someone).getBoundingClientRect(), pt = p9.getBoundingClientRect().top;
+      if (nb.bottom > pt - 11) res.behaviour.push(`opening the sheet left ${someone} under it (${Math.round(nb.bottom)} > ${Math.round(pt)})`);
+      const other = ids.find(x => x !== someone);
+      m9.select(other, { focus: false, animate: false });
+      if (m9.arrangement.sheet !== "open") res.behaviour.push("the sheet folded when another node was selected");
+      t9().click();
+      m9._els.get(other).click();
+      if (m9.arrangement.sheet !== "open") res.behaviour.push("activating the selected node again did not open the sheet");
+      m9.destroy(); host9.remove(); scrollTo(0, 0);
+    } catch (e) { res.behaviour.push(`sheet check threw ${e.name}: ${e.message}`); }
+  }
   // The detail's own bullets are discs wherever the panel sits (inline it is inside the lane's list).
   const withList = map.toJSON().nodes.find(n => Array.isArray(n.details) && n.details.length)?.id;
   if (withList) {
     map.select(withList, { focus: false, animate: false });
-    const ul = map.root.querySelector(".panel > ul");
+    const ul = map.root.querySelector(".panel .p-details");
     if (ul && getComputedStyle(ul).listStyleType !== "disc") res.behaviour.push(`detail bullets are ${getComputedStyle(ul).listStyleType}`);
     map.select(null, { focus: false });
   }

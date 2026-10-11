@@ -94,8 +94,12 @@ jobs:
           done
       - name: A right-to-left page
         run: EXTRA="&rtl=1" scripts/audit.sh "" 1400 500
-      - name: A short window, where the detail drawer covers the foot of the screen
-        run: HEIGHT=800 scripts/audit.sh "" 1100 500
+      - name: Short windows, where the detail is a sheet at the foot of the screen (and a short board, where it fits below)
+        run: |
+          HEIGHT=800 scripts/audit.sh "" 1100 500
+          HEIGHT=700 scripts/audit.sh "" 1000
+          HEIGHT=430 scripts/audit.sh "" 932
+          HEIGHT=800 scripts/audit.sh ../../examples/state-machine/board.json 1100
       - name: The built file, themed from a page with its own variables
         run: EXTRA="&dist=1&hostvars=1" scripts/audit.sh "" 1400 900 500
       - name: The dark theme

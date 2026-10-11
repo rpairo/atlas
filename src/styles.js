@@ -26,6 +26,11 @@ export const STYLES = `
   --radius: var(--atlas-radius, 6px);
   --mono: var(--atlas-font-mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
   --node-min: var(--atlas-node-min, 150px);
+  /* The detail as a sheet at the foot of the window: open height, distance from the bottom (raise
+     it above a page's own fixed bottom bar), and the side panel's distance from the top. */
+  --sheet-height: var(--atlas-sheet-height, min(max(42vh, 280px), 100vh - 120px));
+  --sheet-bottom: var(--atlas-sheet-bottom, max(12px, env(safe-area-inset-bottom)));
+  --panel-top: var(--atlas-panel-top, 16px);
   color: var(--ink);
   font: inherit;
   line-height: 1.5;
@@ -42,6 +47,7 @@ export const STYLES = `
   --ink-2: var(--atlas-ink-2, #98a9bd); --rule: var(--atlas-rule, #2a3a4e); --grid: var(--atlas-grid, #152232);
   --out: var(--atlas-out, #e88d52); --in: var(--atlas-in, #6ea8ec); --shadow: var(--atlas-shadow, rgba(0, 0, 0, .55));
 }
+@supports (height: 1dvh) { .atlas { --sheet-height: var(--atlas-sheet-height, min(max(42dvh, 280px), 100dvh - 120px)); } }
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
 button { font: inherit; color: inherit; }
@@ -136,9 +142,48 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .panel {
   background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--radius);
   padding: 18px 18px 20px; display: grid; gap: 12px; min-width: 0;
+  grid-template-columns: minmax(0, 1fr);   /* never as wide as a long unbroken title */
 }
-.atlas[data-panel="side"] .panel { position: sticky; top: 16px; }
-.atlas[data-panel="below"] .panel { position: sticky; bottom: 12px; max-height: 42vh; overflow: auto; box-shadow: 0 12px 32px -8px var(--shadow); }
+.atlas[data-panel="side"] .panel { position: sticky; top: var(--panel-top); max-height: calc(100vh - 2 * var(--panel-top)); overflow: auto; }
+.atlas[data-panel="below"] .panel { position: static; }
+/* The sheet: sticky at the foot of the window, its head always there, its body only when open. Grid
+   rows (not flex) so the body scrolls inside the open sheet in every engine. */
+.atlas[data-panel="sheet"] .panel {
+  position: sticky; bottom: var(--sheet-bottom); padding: 0; gap: 0;
+  grid-template-rows: auto minmax(0, 1fr); max-height: var(--sheet-height); overflow: hidden; container-type: inline-size;
+  box-shadow: 0 -1px 2px var(--shadow), 0 -12px 32px -16px var(--shadow);
+}
+.atlas[data-panel="sheet"] .p-title { font-size: inherit; margin: 0; }
+.atlas[data-panel="sheet"] .p-body { overflow: auto; overscroll-behavior: contain; padding: 14px 18px 18px; border-top: 1px solid var(--grid); }
+.panel[data-sheet="peek"] .p-body { height: 0; padding-block: 0; border-top-width: 0; visibility: hidden; }   /* hidden also leaves the tab order */
+.p-toggle {
+  display: flex; flex-wrap: nowrap; align-items: baseline; gap: 4px 12px; width: 100%; min-height: 48px; padding: 13px 18px;
+  border: 0; border-radius: var(--radius) var(--radius) 0 0; background: none; text-align: start; cursor: pointer;
+}
+.p-toggle:hover { background: color-mix(in srgb, var(--paper) 55%, var(--sheet)); }
+.p-toggle:focus-visible { outline-offset: -2px; }
+.p-toggle .p-lane { flex: none; margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2); }
+.p-toggle .p-name { flex: 0 1 auto; min-width: 0; font-size: 1.05rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.p-toggle .p-sub { flex: 1 1 0; min-width: 0; font: 12.5px/1.4 var(--mono); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.p-counts { flex: none; display: flex; gap: 14px; margin-inline-start: auto; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; }
+.p-counts > span { display: inline-flex; align-items: center; gap: 6px; }
+.p-counts > span::before { content: ""; width: 12px; border-top: 2px solid; }
+.p-counts [data-dir="in"] { color: var(--in); } .p-counts [data-dir="out"] { color: var(--out); }
+.p-chev { flex: none; align-self: center; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.75; }
+.panel[data-sheet="open"] .p-chev { rotate: 180deg; }
+@container (max-width: 560px) { .p-toggle { flex-wrap: wrap; } .p-toggle .p-sub { display: none; } .p-counts { margin-inline-start: 0; } }
+@media (prefers-reduced-motion: no-preference) {
+  .atlas[data-panel="sheet"] { interpolate-size: allow-keywords; }      /* Chrome and Edge 129+; instant elsewhere */
+  .atlas[data-panel="sheet"] .p-body { transition: height .22s cubic-bezier(.2,0,0,1), padding .22s, visibility 0s; }
+  .panel[data-sheet="peek"] .p-body { transition: height .18s, padding .18s, visibility 0s .18s; }
+  .p-chev { transition: rotate .2s; }
+}
+.atlas[data-motion="off"] :is(.p-body, .p-chev) { transition: none !important; }   /* animate: false */
+/* The detail's body: details, incoming, outgoing, side by side when the panel is wide. */
+.p-body { display: grid; gap: 14px 28px; align-items: start; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); min-width: 0; }
+/* Inline (stacked), the detail sits right under its node: its head would repeat the node, so it is
+   kept for screen readers only. */
+.atlas[data-panel="inline"] .panel > :is(.p-lane, .p-title, .p-sub) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .panel .p-lane { margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2); }
 .panel .p-title { margin: 0; font-size: 1.4rem; line-height: 1.2; text-wrap: balance; overflow-wrap: anywhere; }
 .panel .p-sub { margin: 0; font: 12.5px/1.4 var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
