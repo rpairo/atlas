@@ -101,8 +101,9 @@ appear at once. `animate: false` turns all motion off for everyone, including th
   fonts and classic scroll bars), and in Firefox and WebKit. It presses every arrow on every node,
   steps through every connection of a dozen nodes with Alt and checks each step's description, the
   empty directions, Escape, the order of the detail, the announcements, the sheet's toggle and
-  focus, and the forced-colour states. axe-core scans of the examples (light, dark and stacked, with
-  and without a selection) report no violations.
+  focus, and the forced-colour states. axe-core 4 scans of the four examples and a board with nested
+  groups report no violations (250 scans in Chrome and WebKit: light, dark, stacked and as a sheet;
+  without a selection, with one, with the sheet open, with marks and after a keyboard step).
 - **Not verified yet with a screen reader.** The descriptions and announcements are checked in the
   browser's accessibility tree, not as spoken by NVDA, JAWS, Narrator or VoiceOver. Still to check by
   hand: whether NVDA's browse mode and JAWS's virtual cursor pass Alt with Down and Up through to the
