@@ -26,20 +26,39 @@ Options left out or set to `undefined` keep their defaults.
 |---|---|---|---|
 | `document` | object or JSON text | none | The board to load. Without it the map starts empty; call `load()` later. |
 | `selected` | node id | `meta.selected` | Node selected at start. |
-| `panel` | `"auto"` or `false` | `"auto"` | `false` hides the detail panel. |
-| `labels` | object | English | Interface texts: `{ incoming, outgoing, unassigned, selfLoop, board, detail }`. `board` names the board for screen readers when it has no `meta.title`; `detail` names the detail panel. |
+| `panel` | `"auto"`, `"side"`, `"below"`, `"sheet"` or `false` | `"auto"` | Where the detail goes: by the room available (see [How the map fits its box](theming-and-layout.md#how-the-map-fits-its-box)), forced, or nowhere. |
+| `labels` | object | English | Interface texts, below. |
 | `renderNode` | function | none | `(node, button, live) => void`: replaces the content of each node. See [Custom node content](#custom-node-content). |
-| `animate` | boolean | `true` | Trace wires when a node is selected. |
+| `animate` | boolean | `true` | Motion: edits move nodes into place, wires trace when a node is selected, the sheet folds smoothly. `false` turns all of it off. |
 | `historyLimit` | number | `200` | Most undo steps kept. |
 | `headingLevel` | 1–6 | `2` | Heading level of the lane titles and of the detail's title; "Incoming" and "Outgoing" go one below. Set it so the map fits the page's outline (under an `h2`, use `3`). |
 | `shadow` | boolean | `true` | Render into a shadow root. With `false` Atlas renders into the element itself and its stylesheet applies to the whole page; keep the default unless you need to. |
 
-The default labels are `Incoming`, `Outgoing`, `Unassigned`, `Feeds back into itself`, `Map` (board)
-and `Detail` (detail). A page in
-another language passes its own:
+#### Labels
+
+| Label | Default | |
+|---|---|---|
+| `incoming`, `outgoing` | `Incoming`, `Outgoing` | Headings of the detail's connections, and the sheet's counts. |
+| `unassigned` | `Unassigned` | The lane of nodes without one. |
+| `selfLoop` | `Feeds back into itself` | Said and shown for a node with an edge to itself. |
+| `board` | `Map` | The board's accessible name when it has no `meta.title`. |
+| `detail` | `Detail` | The detail panel's accessible name. |
+| `summary` | none | What a selection says, with `{title}`, `{incoming}`, `{outgoing}`: `"{title}: {incoming} entradas, {outgoing} salidas"`. Without it: "Triage: 5 incoming, 2 outgoing", built from `incoming` and `outgoing`. |
+| `inStep`, `outStep` | `Incoming {n} of {total} into {hub}`, `Outgoing {n} of {total} from {hub}` | How a neighbour of the selection is described to screen readers ([keyboard steps](accessibility.md#keyboard)). |
+| `noneIn`, `noneOut`, `noneAll` | `{hub}: no incoming connections` (and so on) | Said when a keyboard step finds nothing that way. |
+| `cleared` | `Selection cleared` | Said when Escape clears the selection. |
+| `keys` | a sentence | The board's description: the keys it takes. |
+| `markStep` | `{n} of {total}: {title}` | Said by `nextMark()` when focus stays outside the map. |
+| `marked` | `Match {n} of {total}` | How a marked node is described to screen readers. |
+
+A page in another language passes its own. Templates make whole sentences translatable:
 
 ```js
-new Atlas(el, { document: board, labels: { incoming: "Entradas", outgoing: "Salidas", unassigned: "Sin carril", selfLoop: "Vuelve sobre sí misma" } });
+new Atlas(el, { document: board, labels: {
+  incoming: "Entradas", outgoing: "Salidas", unassigned: "Sin carril", selfLoop: "Vuelve sobre sí misma",
+  summary: "{title}: {incoming} entradas, {outgoing} salidas",
+  inStep: "Entrada {n} de {total} hacia {hub}", outStep: "Salida {n} de {total} desde {hub}",
+} });
 ```
 
 ### Reading
@@ -49,9 +68,11 @@ new Atlas(el, { document: board, labels: { incoming: "Entradas", outgoing: "Sali
 | `toJSON()` | board | The board as it should be saved: canonical, with the current order as its sketch and unknown fields restored; loading it again draws the same map. `export()` is the same. |
 | `node(id)` | node or `null` | A copy of the node. |
 | `edges(id)` | edges | Copies of every edge that starts or ends at `id`. |
-| `find(text)` | ids | Nodes whose title, subtitle or details contain `text`, ignoring case. |
+| `find(text)` | ids | Nodes whose title, subtitle (the live one too) or details contain `text`, ignoring case and accents, in reading order. Blank text finds nothing. |
 | `suggestions()` | `{ node?, code, message }[]` | Advice, never applied: nodes most of whose edges run backwards (`lane`), and nodes without a lane (`unassigned`). |
 | `selected` | id or `null` | The selected node. |
+| `marked`, `currentMark` | ids, id or `null` | The marked nodes in reading order, and the current one (see `mark()`). |
+| `arrangement` | `{ board, panel, sheet }` | Experimental. How the map is laid out now: `board` is `"flow"`, `"scroll"` or `"stack"`; `panel` is `"side"`, `"below"`, `"sheet"`, `"inline"` or `"none"`; `sheet` is `"peek"` or `"open"` (null when the panel is not a sheet). |
 | `rev` | number | Revision, increased by every load, edit, undo and redo. |
 | `warnings` | findings | Warnings of the current board (see [Board format](board-format.md#errors-and-warnings)). |
 | `canUndo`, `canRedo` | boolean | |
@@ -65,12 +86,12 @@ step, animates the change and fires `change`. Editing methods return the new rev
 
 | Method | |
 |---|---|
-| `load(board, { optimize, selected })` | Replaces the board and clears the history. A board without `meta.ordered: true` is tidied once (fewest crossings); `optimize: true` forces that, `false` prevents it. Returns the map. |
+| `load(board, { optimize, selected })` | Replaces the board and clears the history. A board without `meta.ordered: true` is tidied once (fewest crossings); `optimize: true` forces that, `false` prevents it. On a board without flow lanes it saves each node's column in `layer` ([Nodes](board-format.md#nodes)), as every edit does. Returns the map. |
 | `addNode(node, { index, edges })` | Adds a node with its optional `edges`. Without `index` it enters the gap of its lane with the fewest crossings; with `index` it becomes the `index`-th node of its lane, or goes to the nearest gap that keeps the lane's groups and constraints as they are. Existing nodes never change places. |
 | `updateNode(id, changes)` | Merges `changes` into the node. A field set to `null` is removed. The id cannot change here. |
 | `moveNode(id, { lane, index })` | Moves a node to another lane (`lane: null` removes its lane) and/or position. |
 | `removeNode(id)` | Removes a node with its edges and constraints. |
-| `renameNode(from, to)` | Changes an id and every reference to it (edges, derived edge ids, constraints, `meta.selected`). Nothing moves. |
+| `renameNode(from, to)` | Changes an id and every reference to it (edges, derived edge ids, constraints, `meta.selected`). Nothing moves: the node keeps its element, live state, selection and marks, also when undo, redo, `apply()` or `batch()` renames it. |
 | `connect(from, to, { id, label, details, type })` | Adds an edge. |
 | `updateEdge(id, changes)` | Merges `changes` into an edge (`null` removes a field). |
 | `disconnect(id)` / `disconnect({ from, to })` | Removes an edge by id, or the first edge from `from` to `to`; throws if there is none. |
@@ -80,7 +101,7 @@ step, animates the change and fires `change`. Editing methods return the new rev
 | `addConstraint(constraint)`, `removeConstraint(index)` | See [Constraints](board-format.md#constraints). |
 | `pin(id, { lane, index })`, `unpin(id)` | Optionally moves the node, then marks it `pinned` so `reorderAll()` leaves it in place. |
 | `setMeta(changes)` | Merges into `meta` (for example `{ direction: "down" }`). |
-| `reorderAll({ dryRun })` | Reorders every lane for the fewest crossings, keeping pinned nodes in place. Returns `{ swaps }`, the number of node pairs that change places; with `dryRun: true` it only counts them. |
+| `reorderAll({ dryRun })` | Reorders every lane for the fewest crossings, keeping pinned nodes in place; without flow lanes it also lays the columns out afresh from the edges (pinned nodes keep theirs where the edges allow). Returns `{ swaps, layers }`: pairs of nodes that change places in a lane, and pairs whose columns change order. With `dryRun: true` it only counts them. |
 | `batch(fn)` | Runs several edits as one undo step: `map.batch(m => { m.addNode(…); m.connect(…); })`. The batch object offers `addNode`, `connect`, `removeNode`, `updateNode`, `moveNode`, `updateEdge`, `addLane`, `updateLane`, `addGroup`, `updateGroup`, `addConstraint`, `setMeta`, `apply` and `disconnect` (which takes an edge id only); each returns the batch, so calls chain. |
 | `apply(ops)` | Applies raw [operations](#operations) as one step. |
 | `undo()`, `redo()` | Return `false` when there is nothing to undo or redo. Undo restores the exact previous document. The history keeps 200 steps (`historyLimit`). An edit that changes nothing is not a step. |
@@ -90,9 +111,12 @@ step, animates the change and fires `change`. Editing methods return the new rev
 
 | Method | |
 |---|---|
-| `select(id, { focus, animate })` | Selects a node (or clears the selection with `null`), draws its wires and fills the panel. `focus` (default `true`) moves keyboard focus to it. |
+| `select(id, { focus, animate, reveal, announce })` | Selects a node (or clears the selection with `null`), draws its wires and fills the panel. `focus` (default `true`) moves keyboard focus to it; `reveal` (default: as `focus`) scrolls it into view, clear of the detail sheet; `announce` (default `false`) makes screen readers say its summary, as a person's selection does. |
+| `mark(ids)` | Marks nodes, for example the results of a search: `map.mark(map.find(text))`. They keep their look (a fill and a dot) while every other node steps back. Unknown ids are ignored; `null` or `[]` clears. Marks follow renames, leave with removed nodes, are cleared by `load()`, are not saved, are not undoable and never change the selection. Atlas does not re-run a search after edits: re-run `find()` on `change` for live results. |
+| `nextMark(step, { focus })` | Makes the next mark (`step` 1, the default) or the previous one (`-1`) current, in reading order, wrapping: it scrolls into view and takes the map's tab stop (Tab from a search box lands on it); with `focus: true` it also takes focus. Never selects. Returns its id, or `null` without marks. |
+| `openDetail(open)` | Opens (or with `false`, folds) the detail when it is a sheet, keeping the selected node in view above it. Returns `"open"` or `"peek"`. |
 | `setState(id, { subtitle, status })` | Live content that never moves anything: replaces the subtitle shown (not the one in the board) and sets a status. `status` must match `[a-z0-9_-]{1,32}` and becomes the CSS part `status-<value>`. `null` clears either. |
-| `settle()` | Finishes running transitions at once and redraws the wires. Useful before measuring or taking a screenshot. |
+| `settle()` | Finishes running motion at once and redraws the wires. Useful before measuring or taking a screenshot. |
 | `destroy()` | Stops observing, cancels animations and empties its root (the shadow root, or the element with `shadow: false`). Final: `destroyed` turns true and the instance draws nothing more. |
 
 ### Custom node content
@@ -128,7 +152,7 @@ Importing either build registers the element. It is a thin wrapper around `Atlas
 |---|---|
 | `src` | URL of the board. Same origin only, unless `cross-origin` is present. Changing it loads the new board. |
 | `selected` | Node to select. Changing it selects another node. |
-| `panel` | `panel="false"` hides the detail panel (read when the element connects). |
+| `panel` | `false` hides the detail panel; `side`, `below` or `sheet` forces where it goes (read when the element connects). |
 | `cross-origin` | Allows `src` on another origin. |
 | `theme` | `light` or `dark` forces a theme; without it the system preference applies. |
 
@@ -163,6 +187,8 @@ element that is inserted again gets a new engine and loads its board again.
 |---|---|---|
 | `change` | `atlas-change` | `{ rev, diff, warnings }`; `diff` is `null` after `load()` |
 | `select` | `atlas-select` | `{ id }`; `id` is `null` when the selection is cleared |
+| `mark` | `atlas-mark` | `{ ids, current }`: the marks and the current one, when either changes |
+| `arrange` | `atlas-arrange` | Experimental. The new `arrangement`, when it changes |
 | | `atlas-error` (`<atlas-map>` only) | `{ errors: [{ path, code, message }] }` |
 
 Events on the host element bubble and cross shadow boundaries (`composed`).
@@ -182,7 +208,7 @@ These work on plain data, need no DOM and run in Node.
 | `load(input)` | `normalize` then `validate`; returns `{ model, warnings }` or throws `AtlasError` with every error. |
 | `apply(model, ops)` | Applies operations atomically to a copy: returns `{ model, warnings }` or throws `AtlasError` and leaves `model` untouched. |
 | `serialize(model)` | The document to save. |
-| `diff(before, after)` | What changed between two models (the `diff` of `change` events). |
+| `diff(before, after)` | What changed between two models (the `diff` of `change` events). A node whose saved `layer` changed is listed under `changed`. |
 
 `FORMAT` is `"atlas/1"`, `LIMITS` holds the [limits](board-format.md#limits) and `VERSION` (in the
 builds) is the version of Atlas.
@@ -230,9 +256,11 @@ every editing method. `error.errors` lists every problem as
 ### Placement and routing (experimental)
 
 `layout(model, { optimize })`, `bestInsertion(model, nodeId, near)`, `inversions(before, after)`,
-`route(selected, edges, geometry)`, `demand(…)` and `ROUTE` expose the engine's internals: where
-every node goes, and how the wires of one selection run through the corridors. They are useful for
-tests and tools, but their shapes may change in any minor release.
+`withLayers(model, layout)`, `route(selected, edges, geometry)`, `demand(…)` and `ROUTE` expose the
+engine's internals: where every node goes, and how the wires of one selection run through the
+corridors. They are useful for tests and tools, but their shapes may change in any minor release.
+`withLayers` saves the columns that `layout()` computed into the nodes' `layer` fields, as `Atlas`
+does after every edit; code that edits with `apply()` alone can call it to keep the same stability.
 
 ## Stability
 
@@ -241,8 +269,14 @@ release (0.3.0) may break the public API and a patch release (0.2.1) never does.
 only a major release may break it.
 
 **Public API:** the `atlas/1` board format and its schema, everything documented on this page
-except the experimental functions, the `<atlas-map>` attributes and events, the `--atlas-*` CSS
-variables, the CSS parts and the package's `exports`.
+except what is marked experimental, the `<atlas-map>` attributes and events, the `--atlas-*` CSS
+variables, the CSS parts, the key bindings and the package's `exports`.
 
-**Not public:** members whose names start with `_`, the experimental functions, the structure and
+**Not public:** members whose names start with `_`, anything marked experimental, the structure and
 class names of the rendered DOM, and the default colours, sizes and animation timings.
+
+**Deprecation.** Something about to go is marked "deprecated since 0.N" here and `@deprecated` in
+the type declarations, listed under "Deprecated" in the changelog, and prints one `console.warn`
+per page. It goes at the earliest in the next minor release while Atlas is 0.x (the next major from
+1.0), always after at least one release with the warning. Experimental members get no notice.
+Fields of `atlas/1` are never removed ([How the format grows](board-format.md#how-the-format-grows)).

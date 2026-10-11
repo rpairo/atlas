@@ -142,6 +142,9 @@
           },
           "pinned": {
             "type": "boolean"
+          },
+          "layer": {
+            "description": "The node's column on a board without flow lanes, a whole number saved by Atlas so that edits keep the drawing stable; only the order of the numbers matters. Ignored in bands and on boards with flow lanes; another kind of value is kept and ignored (with a warning)."
           }
         }
       }

@@ -32,8 +32,8 @@ Atlas is two single files with everything inside, styles included. Pick one way:
 | How | What to use |
 |---|---|
 | Download | `atlas.js` (ES module) or `atlas.global.js` (classic script) from the [latest release](https://github.com/rpairo/atlas/releases/latest) |
-| CDN | `https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.3.2/dist/atlas.js` (always with an exact version) |
-| npm, from GitHub | `npm install github:rpairo/atlas#v0.3.2`, then `import { Atlas } from "@rpairo/atlas"` |
+| CDN | `https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.4.0/dist/atlas.js` (always with an exact version) |
+| npm, from GitHub | `npm install github:rpairo/atlas#v0.4.0`, then `import { Atlas } from "@rpairo/atlas"` |
 | Copy | `dist/atlas.js` or `dist/atlas.global.js` from this repository |
 
 Atlas is not published to the npm registry. Every release lists the
@@ -43,7 +43,7 @@ hashes of its files; [Getting started](docs/getting-started.md#pin-a-version) sh
 ## Quick start
 
 ```html
-<script type="module" src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.3.2/dist/atlas.js"></script>
+<script type="module" src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.4.0/dist/atlas.js"></script>
 
 <atlas-map>
   <script type="application/json">

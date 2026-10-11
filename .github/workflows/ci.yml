@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The release workflow runs all of it on the tagged commit before it publishes anything.
+  workflow_call:
 
 permissions:
   contents: read
@@ -16,6 +18,7 @@ jobs:
   test:
     name: test (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +38,7 @@ jobs:
   dist:
     name: dist is built from src
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -47,6 +51,7 @@ jobs:
   types:
     name: type declarations
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -58,6 +63,7 @@ jobs:
   audit:
     name: browser audit
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       CHROME: google-chrome
       # The runner's kernel does not allow Chrome's sandbox; the pages are this repository's own,
@@ -65,6 +71,8 @@ jobs:
       CHROME_FLAGS: --no-sandbox
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The browser
+        run: $CHROME --version
       - name: Example boards, from wide to stacked
         run: |
           for board in incident-response dependencies state-machine org-chart; do
@@ -77,14 +85,59 @@ jobs:
           done
       - name: A right-to-left page
         run: EXTRA="&rtl=1" scripts/audit.sh "" 1400 500
-      - name: A short window, where the detail drawer covers the foot of the screen
-        run: HEIGHT=800 scripts/audit.sh "" 1100 500
+      - name: Short windows, where the detail is a sheet at the foot of the screen (and a short board, where it fits below)
+        run: |
+          HEIGHT=800 scripts/audit.sh "" 1100 500
+          HEIGHT=700 scripts/audit.sh "" 1000
+          HEIGHT=430 scripts/audit.sh "" 932
+          HEIGHT=800 scripts/audit.sh ../../examples/state-machine/board.json 1100
       - name: The built file, themed from a page with its own variables
         run: EXTRA="&dist=1&hostvars=1" scripts/audit.sh "" 1400 900 500
+      - name: The dark theme
+        run: EXTRA="&theme=dark" scripts/audit.sh "" 1400 500
+      - name: Nested and titled groups, across and along the flow
+        run: |
+          scripts/audit.sh ../fixtures/groups.json 1400 900 500
+          for direction in left down; do
+            EXTRA="&direction=$direction" scripts/audit.sh ../fixtures/groups.json 1400
+          done
+
+  chrome-playwright:
+    # Chrome again, through Playwright: what the headless page above cannot emulate (forced colours,
+    # reduced motion, fractional scale factors) and real frames.
+    name: browser audit (Chrome, emulation)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - name: Playwright, driving the runner image's Chrome (not a dependency of Atlas)
+        run: npm install --no-save --no-package-lock playwright@1.63.0
+      - name: The audit in Chrome
+        run: node scripts/audit-browsers.mjs chrome
+
+  edge-windows:
+    # Edge on Windows: its fonts, its classic scroll bars (headless hides them unless asked), scale
+    # factors of Windows laptops, and forced colours (Windows contrast themes), emulated.
+    name: browser audit (Edge, Windows)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - name: Playwright, driving the Edge of the runner image (not a dependency of Atlas)
+        run: npm install --no-save --no-package-lock playwright@1.63.0
+      - name: The audit in Edge
+        run: node scripts/audit-browsers.mjs msedge --scrollbars
 
   other-browsers:
     name: browser audit (Firefox, WebKit)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

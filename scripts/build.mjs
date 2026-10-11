@@ -5,7 +5,7 @@
 // the modules already evaluated. The sources keep to simple single-line import/export forms.
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 
-const ORDER = ["model", "layout", "route", "styles", "atlas", "element", "index"];
+const ORDER = ["model", "layout", "route", "styles", "motion", "atlas", "element", "index"];
 const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url))).version;
 
 function transform(name, code) {
@@ -46,7 +46,7 @@ function renames(list) {
 
 const body = ORDER.map(n => transform(n, readFileSync(new URL(`../src/${n}.js`, import.meta.url), "utf8"))).join("\n");
 const banner = `/*! Atlas ${version} | MIT | https://github.com/rpairo/atlas */\n`;
-const names = ["Atlas", "AtlasMap", "define", "FORMAT", "LIMITS", "AtlasError", "parse", "normalize", "validate", "load", "apply", "serialize", "diff", "layout", "bestInsertion", "inversions", "route", "demand", "ROUTE"];
+const names = ["Atlas", "AtlasMap", "define", "FORMAT", "LIMITS", "AtlasError", "parse", "normalize", "validate", "load", "apply", "serialize", "diff", "layout", "bestInsertion", "inversions", "withLayers", "route", "demand", "ROUTE"];
 
 mkdirSync(new URL("../dist/", import.meta.url), { recursive: true });
 writeFileSync(new URL("../dist/atlas.js", import.meta.url),

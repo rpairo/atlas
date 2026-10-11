@@ -1,6 +1,6 @@
 {
   "name": "@rpairo/atlas",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "A dependency-free engine for relational maps: nodes, lanes and orthogonal wires that place and route themselves.",
   "keywords": [
     "graph-drawing",

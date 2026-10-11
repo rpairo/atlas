@@ -29,7 +29,8 @@ export class AtlasMap extends Base {
 
   connectedCallback() {
     if (this.atlas && !this.atlas.destroyed) return;
-    this.atlas = new Atlas(this, { selected: this.getAttribute("selected") ?? undefined, panel: this.getAttribute("panel") === "false" ? false : "auto" });
+    const panel = this.getAttribute("panel");
+    this.atlas = new Atlas(this, { selected: this.getAttribute("selected") ?? undefined, panel: panel === "false" ? false : ["side", "below", "sheet"].includes(panel) ? panel : "auto" });
     const start = () => {
       const inline = this.querySelector(':scope > script[type="application/json"]');
       if (inline) this._load(inline.textContent, ++this._seq);

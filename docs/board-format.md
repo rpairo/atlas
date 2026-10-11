@@ -77,11 +77,15 @@ A **band** runs across the whole flow, before it (`"before"`: controls on top) o
 (`"after"`: infrastructure at the bottom). A board has at most one band of each kind.
 
 **Without any flow lane**, Atlas draws the lanes from the relations themselves (a layered
-drawing): a node that feeds another goes to an earlier lane. Cycles are broken by a depth-first
-search in document order, and the edge that closes a cycle is drawn as a backward edge. Because
-those lanes come from the edges, an edit that adds or removes an edge can move nodes to another
-lane (adding a node that feeds one of the first lane pushes it and what follows it one lane on);
-inside each lane the order is kept. Declare flow lanes when nodes must stay where they are.
+drawing): a node that feeds another goes to an earlier lane. The first time, cycles are broken by a
+depth-first search in document order, and the edge that closes a cycle is drawn as a backward edge.
+Atlas then saves each node's column in its `layer` field (see [Nodes](#nodes)), and from then on
+keeps those columns wherever the edges allow: only an edge that closes a cycle is drawn backwards,
+and when an edit makes the saved columns impossible Atlas moves as few nodes as it can (pushing the
+nodes after the conflict forward, or pulling the ones before it back). A new node takes the column
+after its inputs, or a new column of its own. Edits still move nodes when the edges demand it
+(reversing an edge, or adding one that makes a chain longer); inside each lane the order is kept.
+`reorderAll()` lays the columns out afresh. Declare flow lanes when nodes must stay where they are.
 
 **With flow lanes**, every node should declare its lane. A node without one goes to a visible
 *Unassigned* lane at the end, with an `unassigned` warning. Atlas never guesses a lane from the
@@ -104,6 +108,7 @@ edges.
 | `group` | group id | The group it belongs to. |
 | `type` | string | Your own category. A value matching `[A-Za-z0-9_-]{1,32}` also adds the CSS part `node-<type>`. |
 | `pinned` | `true` or `false` | `reorderAll()` leaves this node where it is. |
+| `layer` | whole number | On a board without flow lanes, the node's column, saved by Atlas after every load and edit so that the drawing stays stable; only the order of the numbers matters, and gaps are fine. Ignored in bands and on boards with flow lanes (and kept there). A value that is not a whole number is your own data: it is kept, ignored for placement, and reported with an `ignored` warning. |
 
 ## Edges
 
@@ -231,6 +236,17 @@ is meant for people. Errors make a board unusable; warnings are drawn anyway and
 | `unknown-type` | warning | An edge type is not in a non-empty `edgeTypes`. |
 | `group-split` | warning | Constraints put other nodes between the members of a group in a lane (reported by the placement, in `map.warnings`). |
 | `cross-lane` | warning | A `before` constraint relates nodes of different lanes. |
+| `ignored` | warning | A node's `layer` is not a whole number: it is kept and ignored. |
+
+## How the format grows
+
+A new optional field that an older Atlas can safely ignore stays in `atlas/1` (`layer`, added in
+0.4.0, is one: Atlas 0.3 keeps it and draws the board from the edges, as before). The format
+version goes up only when an older reader would misread a board: an existing field changing its
+meaning, a new required field, or a field whose loss would lose something the reader can see.
+Fields of `atlas/1` are never removed or given another meaning; a deprecated one keeps loading,
+at most with a warning. Names starting with `x-` are reserved for your own data and will never be
+used by Atlas.
 
 ## Ids
 

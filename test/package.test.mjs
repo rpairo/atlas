@@ -3,7 +3,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { gzipSync } from "node:zlib";
 import vm from "node:vm";
 import * as source from "../src/index.js";
 import * as built from "../dist/atlas.js";
@@ -67,4 +68,42 @@ test("every path in package.json exists", () => {
   collect(pkg.exports);
   paths.push(...pkg.files, pkg.main, pkg.types);
   for (const path of paths) assert.ok(existsSync(new URL(path, root)), `${path} exists`);
+});
+
+test("every version a reader copies is the package version, and the changelog has it", () => {
+  const files = ["README.md", "CONTRIBUTING.md", "examples/starter/index.html", ...readdirSync(new URL("docs/", root)).filter(f => f.endsWith(".md")).map(f => `docs/${f}`)];
+  for (const file of files) {
+    for (const [, v] of read(file).matchAll(/(?:@|#)v(\d+\.\d+\.\d+)\b/g)) assert.equal(v, pkg.version, `${file} points at v${v}`);
+  }
+  assert.ok(read(".github/ISSUE_TEMPLATE/bug_report.yml").includes(`placeholder: ${pkg.version}\n`), "the bug report's version placeholder is the package version");
+  const changelog = read("CHANGELOG.md");
+  const unreleased = /^## \[Unreleased\]/m.test(changelog);
+  // On a release branch the version has its section and compare link; between releases the next
+  // changes gather under [Unreleased] and the package keeps the last released version.
+  assert.ok(new RegExp(`^## \\[${pkg.version.replace(/\./g, "\\.")}\\] - \\d{4}-\\d{2}-\\d{2}`, "m").test(changelog) || unreleased, `CHANGELOG.md has a section for ${pkg.version}`);
+  assert.ok(changelog.includes(`\n[${pkg.version}]: https://github.com/rpairo/atlas/`), `CHANGELOG.md links ${pkg.version}`);
+});
+
+test("every public member, option and label of Atlas is documented and declared", () => {
+  const api = read("docs/api.md"), dts = read("types/atlas.d.ts");
+  const members = Object.getOwnPropertyNames(source.Atlas.prototype).filter(n => n !== "constructor" && !n.startsWith("_"));
+  for (const m of members) {
+    assert.ok(new RegExp(`\`${m}\\b`).test(api), `docs/api.md documents ${m}`);
+    assert.ok(new RegExp(`^\\s+(?:readonly |get )?${m}\\b`, "m").test(dts), `types/atlas.d.ts declares ${m}`);
+  }
+  const labels = [...read("src/atlas.js").match(/const DEFAULT_LABELS = \{([\s\S]*?)\n\};/)[1].matchAll(/^\s+(\w+):/gm)].map(m => m[1]);
+  assert.ok(labels.length >= 6);
+  for (const l of labels) {
+    assert.ok(new RegExp(`\\b${l}\\b`).test(api), `docs/api.md documents the label ${l}`);
+    assert.ok(new RegExp(`^\\s+${l}\\??:`, "m").test(dts), `types/atlas.d.ts declares the label ${l}`);
+  }
+});
+
+test("the module build stays within its size budget", t => {
+  // Not minified (it is read in the browser's devtools and pasted into pages). The budget is
+  // here to make growth a decision: raise it in the pull request that needs it.
+  const BUDGET = 60 * 1024;
+  const size = gzipSync(readFileSync(new URL("dist/atlas.js", root))).length;
+  t.diagnostic(`dist/atlas.js: ${(size / 1024).toFixed(1)} KB gzip, budget ${(BUDGET / 1024).toFixed(0)} KB`);
+  assert.ok(size <= BUDGET, `dist/atlas.js is ${size} bytes gzip, over the budget of ${BUDGET}`);
 });

@@ -21,10 +21,26 @@ try {
   if (q.get("rtl")) document.documentElement.dir = "rtl";
   // hostvars=1: a page with its own --paper/--sheet/--ink/--rule on :root that themes Atlas with
   // them from the host element (the case that once made a cycle and left the board unpainted).
+  // A page with its own light colours says so with theme="light": the colours it does not set keep
+  // Atlas's light defaults even when the system is dark.
   if (q.get("hostvars")) {
     document.documentElement.setAttribute("style", "--paper:#fbf7ef;--sheet:#fffdf8;--ink:#201a10;--rule:#d9cdb8");
     host.setAttribute("style", "--atlas-paper:var(--paper);--atlas-sheet:var(--sheet);--atlas-ink:var(--ink);--atlas-rule:var(--rule)");
+    host.setAttribute("theme", "light");
   }
+  // offset=N: the map starts N px down the page (a header above it, as on most sites).
+  if (q.get("offset")) document.querySelector("main").style.paddingTop = `${Number(q.get("offset"))}px`;
+  // bars=1: classic scroll bars that take room (as on Windows) in Chromium on any system, also
+  // inside the maps' shadow roots.
+  if (q.get("bars")) {
+    const css = "::-webkit-scrollbar { width: 15px; height: 15px; } ::-webkit-scrollbar-thumb { background: #999; }";
+    const st = document.createElement("style"); st.textContent = css; document.head.append(st);
+    const sheet = new CSSStyleSheet(); sheet.replaceSync(css);
+    const attach = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function (init) { const r = attach.call(this, init); r.adoptedStyleSheets = [sheet]; return r; };
+  }
+  // theme=dark or theme=light: a forced theme, whatever the system's.
+  if (q.get("theme")) host.setAttribute("theme", q.get("theme"));
   const map = new Atlas(host, { document: text, animate: false });
   document.body.dataset.stage = "constructed";
   // Headless Chrome stops producing frames when nothing changes; wait with a timer instead.
@@ -112,11 +128,13 @@ try {
       if (close) res.close.push(`${id}: ${ws[i].from}>${ws[i].to} || ${ws[j].from}>${ws[j].to}`);
     }
   }
-  // A panel under the board (below mode) is a drawer that may overlap it: it must cover the board,
-  // not show through it. Pull it up over the board and look at what is on top.
+  // A sheet at the foot of the window overlaps the board: open, it must cover the board, not show
+  // through it. Pull it up over the board and look at what is on top. Below the board in the page,
+  // the detail never overlaps it.
   res.covered = [];
-  if (wrap.dataset.panel === "below") {
+  if (wrap.dataset.panel === "sheet") {
     map.select(ids[0], { focus: false, animate: false });
+    map.openDetail(true);
     const panel = map.root.querySelector(".panel");
     panel.style.marginTop = "-160px";
     const r = panel.getBoundingClientRect();
@@ -125,6 +143,46 @@ try {
       if (hit && !panel.contains(hit)) res.covered.push(`${Math.round(x)},${Math.round(y)}: ${hit.className?.baseVal ?? hit.className}`);
     }
     panel.style.marginTop = "";
+    map.openDetail(false);
+  }
+  if (wrap.dataset.panel === "below") {
+    map.select(ids[0], { focus: false, animate: false });
+    const panel = map.root.querySelector(".panel");
+    if (getComputedStyle(panel).position !== "static") res.covered.push(`below the board the detail is ${getComputedStyle(panel).position}`);
+    if (panel.getBoundingClientRect().top < boardEl.getBoundingClientRect().bottom - 1) res.covered.push("below the board the detail overlaps it");
+  }
+  // Groups: a group never pushes its lane's nodes into a second column (or row), each box holds
+  // every member of its span and sits inside its parent's box, and a legend is on nothing (no node,
+  // no lane title, no other legend).
+  res.groups = [];
+  if (res.mode === "flow" && model.groups?.length) {
+    map.select(null, { focus: false, animate: false });
+    const R = e => e.getBoundingClientRect();
+    const hit = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5;
+    const inside = (a, b) => a.left >= b.left - 0.5 && a.right <= b.right + 0.5 && a.top >= b.top - 0.5 && a.bottom <= b.bottom + 0.5;
+    const vertical = ["down", "up"].includes(map._layout.direction);
+    const parent = new Map(model.groups.map(g => [g.id, g.parent]));
+    const within = (g, target) => { for (let k = 0; g != null && k < 20; k++, g = parent.get(g)) if (g === target) return true; return false; };
+    for (const lane of map.root.querySelectorAll(".flow > .lane")) {
+      const cross = new Set([...lane.querySelectorAll("ol.nodes > li > .node")].map(b => Math.round(vertical ? R(b).top : R(b).left)));
+      if (cross.size > 1) res.groups.push(`lane ${lane.dataset.lane}: nodes in ${cross.size} ${vertical ? "rows" : "columns"}`);
+      for (const box of lane.querySelectorAll(".group-box")) {
+        const g = box.dataset.group;
+        for (const n of model.nodes) {
+          if (map._layout.laneOf.get(n.id) !== lane.dataset.lane || !within(n.group, g)) continue;
+          if (!inside(R(map._els.get(n.id)), R(box))) res.groups.push(`lane ${lane.dataset.lane}: ${n.id} outside the box of ${g}`);
+        }
+        const up = parent.get(g) != null && lane.querySelector(`.group-box[data-group="${CSS.escape(parent.get(g))}"]`);
+        if (up && !inside(R(box), R(up))) res.groups.push(`lane ${lane.dataset.lane}: the box of ${g} is not inside its parent's`);
+      }
+    }
+    const legends = [...map.root.querySelectorAll(".group-legend > span, .group-box > span")];   // (0.3 put the legend inside the box)
+    const name = e => `"${e.textContent.slice(0, 24)}"`;
+    legends.forEach((g, i) => {
+      for (const [nid, b] of map._els) if (hit(R(g), R(b))) res.groups.push(`legend ${name(g)} on node ${nid}`);
+      for (const t of map.root.querySelectorAll(".lane-title")) if (t.textContent && hit(R(g), R(t))) res.groups.push(`legend ${name(g)} on lane title ${name(t)}`);
+      for (const o of legends.slice(i + 1)) if (hit(R(g), R(o))) res.groups.push(`legend ${name(g)} on legend ${name(o)}`);
+    });
   }
   document.body.dataset.stage = "selected-all";
   // Edits: add, connect, undo restores the exact document, rename keeps geometry.
@@ -169,6 +227,8 @@ try {
   } catch (e) { res.behaviour.push(`map broken after a refused rename: ${e.message}`); }
   map.connect(p, p);
   const self = map.warnings.some(w => w.code === "self");
+  map.select(p, { focus: false, animate: false, announce: true });
+  if (!map._status.textContent.includes(map.labels.selfLoop)) res.behaviour.push(`the summary of a node that feeds itself does not say so (${map._status.textContent})`);
   map.undo();
   if (!self || map.warnings.some(w => w.code === "self")) res.behaviour.push("warnings do not follow undo");
   const centre = id => { const r = map._els.get(id).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
@@ -182,6 +242,155 @@ try {
     const [ax, ay] = centre(id), [bx, by] = centre(to);
     if ((bx - ax) * dx + (by - ay) * dy <= 0) res.behaviour.push(`${key} from ${id} went to ${to}, which is not that way`);
   }
+  // Assistive technology: the selection is the one current node (not a toggle on every node), the
+  // same summary twice is said twice, and find() ignores accents and finds nothing for blank text.
+  try {
+    map.select(live[0], { focus: false, animate: false, announce: true });
+    const current = [...map._els.values()].filter(b => b.getAttribute("aria-current") === "true");
+    if (current.length !== 1 || map._idOf.get(current[0]) !== live[0]) res.behaviour.push(`${current.length} nodes are aria-current`);
+    if ([...map._els.values()].some(b => b.hasAttribute("aria-pressed"))) res.behaviour.push("nodes still carry aria-pressed");
+    const said = map._status.textContent;
+    map.select(live[0], { focus: false, animate: false, announce: true });
+    if (map._status.textContent !== "") res.behaviour.push("the same summary twice was not said again (the live region did not empty)");
+    await new Promise(r => setTimeout(r, 200));
+    if (map._status.textContent !== said) res.behaviour.push(`after emptying, the live region says "${map._status.textContent}"`);
+    if (map.find("").length || map.find("   ").length) res.behaviour.push(`find("") found ${map.find("").length} nodes`);
+    const t0 = map.node(live[0]).title ?? live[0];
+    const accented = t0.replace(/[aeiou]/i, ch => ({ a: "á", e: "é", i: "í", o: "ó", u: "ú" })[ch.toLowerCase()] ?? ch);
+    if (!map.find(accented.toUpperCase()).includes(live[0])) res.behaviour.push(`find("${accented.toUpperCase()}") misses ${live[0]}`);
+    // Only what a person does is announced: a selection made by the page's code is not.
+    map.select(null, { focus: false });
+    await new Promise(r => setTimeout(r, 150));
+    const quiet = map._status.textContent;
+    map.select(live[1] ?? live[0], { focus: false, animate: false });
+    await new Promise(r => setTimeout(r, 150));
+    if (map._status.textContent !== quiet) res.behaviour.push(`a selection made by code was announced ("${map._status.textContent}")`);
+    map._els.get(live[0]).click();
+    await new Promise(r => setTimeout(r, 150));
+    if (map.selected === live[0] && !map._status.textContent.startsWith(map.node(live[0]).title ?? live[0])) res.behaviour.push(`a click on a node was announced as "${map._status.textContent}"`);
+    map.select(null, { focus: false });
+  } catch (e) { res.behaviour.push(`assistive check threw ${e.name}: ${e.message}`); }
+  // Marks: a fill and a dot that read in both themes, nothing moves, the rest steps back (but not
+  // the selection's neighbours), they follow renames, leave with removed nodes, are cleared by load,
+  // and nextMark() walks them in reading order without selecting, saying where it is.
+  try {
+    const rgb = c => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+    const lum = c => { const [r, g, b] = rgb(c).map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+    const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+    const before = rects();
+    const heard = [];
+    const onMark = e => heard.push(e.detail);
+    map.addEventListener("mark", onMark);
+    const some = live.filter((_, i) => i % 5 === 1).slice(0, 4);
+    map.mark([...some, "no such node"]);
+    if (map.marked.join() !== map._ordered().filter(x => some.includes(x)).join()) res.behaviour.push(`marked ${map.marked.join(",")} for ${some.join(",")}`);
+    const after = rects();
+    for (const [k, v] of before) { const w = after.get(k); if (!w || Math.abs(w.l - v.l) > 0.5 || Math.abs(w.t - v.t) > 0.5) { res.behaviour.push(`mark() moved ${k}`); break; } }
+    const b0 = map._els.get(some[0]), cs = getComputedStyle(b0);
+    if (!(b0.getAttribute("part") ?? "").split(" ").includes("marked")) res.behaviour.push("a marked node has no part marked");
+    if (!matchMedia("(forced-colors: active)").matches) {
+      const dot = getComputedStyle(b0, "::after").backgroundColor, paper = getComputedStyle(boardEl).backgroundColor;
+      if (ratio(dot, cs.backgroundColor) < 3 || ratio(dot, paper) < 3) res.behaviour.push(`the mark's dot has ${ratio(dot, cs.backgroundColor).toFixed(2)}:1 on its fill, ${ratio(dot, paper).toFixed(2)}:1 on paper`);
+      if (ratio(getComputedStyle(b0.querySelector(".t") ?? b0).color, cs.backgroundColor) < 4.5) res.behaviour.push("a marked node's title is under 4.5:1 on its fill");
+      const other = [...map._els.values()].find(b => !b.matches(".marked"));
+      if (other && getComputedStyle(other).backgroundColor !== paper) res.behaviour.push("an unmarked node did not step back");
+    }
+    // nextMark: current mark in reading order, revealed, tab stop, said, selection untouched.
+    const sel0 = map.selected;
+    const first = map.nextMark(), second = map.nextMark();
+    if (first !== map.marked[0] || second !== map.marked[1 % map.marked.length]) res.behaviour.push(`nextMark went ${first}, ${second}`);
+    if (map.selected !== sel0) res.behaviour.push("nextMark changed the selection");
+    if (map._els.get(second).tabIndex !== 0) res.behaviour.push("the current mark does not hold the tab stop");
+    if (!(map._els.get(second).getAttribute("part") ?? "").includes("marked-current")) res.behaviour.push("the current mark has no part marked-current");
+    await new Promise(r => setTimeout(r, 150));
+    if (!map._status.textContent.includes(`2 of ${map.marked.length}`)) res.behaviour.push(`nextMark said "${map._status.textContent}"`);
+    if (map.nextMark(-1) !== first) res.behaviour.push("nextMark(-1) did not go back");
+    // Follow a rename, leave with a removed node, clear.
+    map.renameNode(some[0], "audit_marked");
+    if (!map.marked.includes("audit_marked")) res.behaviour.push("a mark did not follow a rename");
+    map.undo();
+    map.removeNode(some[1]);
+    if (map.marked.includes(some[1])) res.behaviour.push("a removed node stayed marked");
+    map.undo();
+    map.mark(null);
+    if (map.marked.length || map.root.querySelector(".marked") || boardEl.classList.contains("has-marks")) res.behaviour.push("mark(null) left marks");
+    if (heard.length < 2 || heard.some(d => !Array.isArray(d.ids))) res.behaviour.push(`mark events: ${JSON.stringify(heard).slice(0, 120)}`);
+    map.removeEventListener("mark", onMark);
+  } catch (e) { res.behaviour.push(`marks check threw ${e.name}: ${e.message}`); }
+  // Forced colours (Windows contrast themes; Chromium emulates them): the selection, an incoming
+  // and an outgoing neighbour and the rest differ by more than colour.
+  if (matchMedia("(forced-colors: active)").matches) {
+    const hub = live.find(x => { const m = map.toJSON(); return m.edges.some(e => e.to === x && e.from !== x) && m.edges.some(e => e.from === x && e.to !== x); });
+    if (hub) {
+      map.select(hub, { focus: false, animate: false });
+      const look = b => { const c = getComputedStyle(b, "::before"); return c.content === "none" || c.content === "normal" ? "none" : `${c.borderTopStyle} ${c.borderTopWidth}`; };
+      const pick = sel => [...map._els.values()].find(b => b.matches(sel));
+      const looks = [".on", ".near-in:not(.near-out)", ".near-out:not(.near-in)", ":not(.on, .near-in, .near-out)"].map(sel => pick(sel) ? look(pick(sel)) : null).filter(Boolean);
+      if (new Set(looks).size !== looks.length) res.behaviour.push(`in forced colours the states look alike: ${looks.join(" | ")}`);
+      map.select(null, { focus: false });
+    }
+  }
+  // Keyboard steps through connections: Alt with Down visits every neighbour of the selection once,
+  // Alt with Right every outgoing one and Alt with Left every incoming one (the other way round when
+  // the flow goes left); each step says where it is; an empty direction keeps focus and says so;
+  // Escape goes back to the selection, then clears it; the detail lists them in the same order.
+  try {
+    const m0 = map.toJSON();
+    const press = (id, key, alt = true) => { map._els.get(id).dispatchEvent(new KeyboardEvent("keydown", { key, altKey: alt, bubbles: true, composed: true, cancelable: true })); return map._idOf.get(map.root.activeElement); };
+    const desc = id => { const ref = map._els.get(id).getAttribute("aria-describedby"); return ref ? map.root.getElementById?.(ref)?.textContent ?? map.root.querySelector(`#${CSS.escape(ref)}`)?.textContent ?? "" : ""; };
+    const leftFlow = map._layout.direction === "left";
+    let stepped = 0;
+    for (const hub of live.slice(0, 12)) {
+      const ins = [...new Set(m0.edges.filter(e => e.to === hub && e.from !== hub).map(e => e.from))];
+      const outs = [...new Set(m0.edges.filter(e => e.from === hub && e.to !== hub).map(e => e.to))];
+      for (const [key, want] of [["ArrowDown", [...ins, ...outs]], [leftFlow ? "ArrowLeft" : "ArrowRight", outs], [leftFlow ? "ArrowRight" : "ArrowLeft", ins]]) {
+        map.select(hub, { animate: false });
+        let at = hub;
+        const seen = [];
+        for (let k = 0; k < want.length; k++) {
+          at = press(at, key);
+          seen.push(at);
+        }
+        if (want.length && [...new Set(seen)].sort().join() !== [...new Set(want)].sort().join()) res.behaviour.push(`Alt+${key} from ${hub} reached ${[...new Set(seen)].length} of ${new Set(want).size} (${seen.slice(0, 4).join(", ")})`);
+        if (seen.some(x => x === undefined || !desc(x))) res.behaviour.push(`Alt+${key} from ${hub}: a step without a description`);
+        if (!want.length) {
+          const stay = press(hub, key);
+          if (stay !== hub || !map._status.textContent) res.behaviour.push(`Alt+${key} on ${hub} with nothing that way moved to ${stay} and said "${map._status.textContent}"`);
+        }
+        stepped += seen.length;
+      }
+      // Escape: back to the selection from a connection, then the selection is cleared.
+      if (ins.length + outs.length) {
+        map.select(hub, { animate: false });
+        const there = press(hub, "ArrowDown");
+        const back = press(there, "Escape", false);
+        if (back !== hub || map.selected !== hub) res.behaviour.push(`Escape from ${there} went to ${back} (selected ${map.selected})`);
+        press(hub, "Escape", false);
+        if (map.selected !== null) res.behaviour.push(`Escape on the selection ${hub} did not clear it`);
+        // The detail lists the neighbours in the order of the steps.
+        map.select(hub, { focus: false, animate: false });
+        const listed = [...map.root.querySelectorAll(".panel .rel button .rt")].map(x => x.textContent);
+        const stepsOrder = map._star(hub).all.map(x => map.node(x.id)?.title ?? x.id);
+        const firstEach = [...map.root.querySelectorAll(".panel .rel")].flatMap(r => [...new Set([...r.querySelectorAll("button .rt")].map(x => x.textContent))]);
+        if (firstEach.join("|") !== stepsOrder.join("|")) res.behaviour.push(`the detail of ${hub} lists ${firstEach.slice(0, 4).join(", ")}; the keys step ${stepsOrder.slice(0, 4).join(", ")}`);
+      }
+    }
+    if (!stepped) res.behaviour.push("no keyboard step was taken");
+    // Every step says "n of N": the n-th step's description has its position and the total.
+    const hub = live.find(x => m0.edges.filter(e => e.to === x && e.from !== x).length >= 2);
+    if (hub) {
+      map.select(hub, { animate: false });
+      const total = map._star(hub).all.length;
+      let at = hub;
+      for (let k = 1; k <= Math.min(total, 4); k++) {
+        at = press(at, "ArrowDown");
+        const n = map._star(hub).in.length;
+        const want = k <= n ? `${k} of ${n}` : `${k - n} of ${total - n}`;
+        if (!desc(at).includes(want)) res.behaviour.push(`step ${k} from ${hub} is described as "${desc(at)}", not "${want}"`);
+      }
+    }
+    map.select(null, { focus: false });
+  } catch (e) { res.behaviour.push(`keyboard steps check threw ${e.name}: ${e.message}`); }
   // Visibility: a node selected with focus, or reached with an arrow key, ends up on screen, inside
   // the board's sideways scroll and not under the detail drawer (the sticky panel below the board).
   res.hidden = [];
@@ -189,7 +398,7 @@ try {
   const seen = id => {
     const r = map._els.get(id).getBoundingClientRect(), box = map._boardWrap.getBoundingClientRect();
     const panel = map.root.querySelector(".panel");
-    const foot = wrap.dataset.panel === "below" && !panel.hidden ? Math.min(innerHeight, panel.getBoundingClientRect().top) : innerHeight;
+    const foot = wrap.dataset.panel === "sheet" && !panel.hidden ? Math.min(innerHeight, panel.getBoundingClientRect().top) : innerHeight;
     where = `node ${r.left | 0}-${r.right | 0} x ${r.top | 0}-${r.bottom | 0}, foot ${foot | 0}, box ${box.left | 0}-${box.right | 0}, window ${innerWidth}x${innerHeight}, scrollY ${scrollY | 0} of ${document.documentElement.scrollHeight - innerHeight}`;
     return r.top >= -1 && r.bottom <= foot + 1 && r.left >= Math.max(0, box.left) - 1 && r.right <= Math.min(innerWidth, box.right) + 1;
   };
@@ -205,19 +414,55 @@ try {
     }
   }
   map.select(null, { focus: false });
+  // The sheet: a map that starts with a selection shows it folded to its head and scrolls nothing;
+  // its toggle (at least 44px tall) and a second activation of the selected node open it, within
+  // its height limits; folded, its body takes no focus; open, the selected node sits above it; the
+  // state holds from one selection to the next.
+  if (wrap.dataset.panel === "sheet") {
+    try {
+      const someone = ids.find(x => model.edges.some(e => e.from === x || e.to === x));   // ids of the board as loaded
+      const host9 = document.createElement("div"); document.querySelector("main").append(host9);
+      scrollTo(0, 0);
+      const m9 = new Atlas(host9, { document: text, selected: someone, animate: false });
+      await new Promise(r => setTimeout(r, 100));
+      const p9 = m9.root.querySelector(".panel"), t9 = () => m9.root.querySelector(".p-toggle");
+      const sh = m9.arrangement;
+      if (sh.panel !== "sheet" || sh.sheet !== "peek" || p9.dataset.sheet !== "peek") res.behaviour.push(`a map starting with a selection shows the detail as ${JSON.stringify(sh)}`);
+      if (p9.getBoundingClientRect().height > 56) res.behaviour.push(`the folded sheet is ${Math.round(p9.getBoundingClientRect().height)}px tall`);
+      if (scrollY !== 0) res.behaviour.push(`building the map scrolled the page to ${scrollY}`);
+      if (!t9() || t9().getBoundingClientRect().height < 44) res.behaviour.push("the sheet's toggle is missing or under 44px tall");
+      if (getComputedStyle(m9.root.querySelector(".p-body")).visibility !== "hidden") res.behaviour.push("the folded sheet's body can take focus");
+      t9().click();
+      const limit = Math.min(Math.max(0.42 * innerHeight, 280), innerHeight - 120);
+      if (m9.arrangement.sheet !== "open" || t9().getAttribute("aria-expanded") !== "true") res.behaviour.push("the toggle did not open the sheet");
+      if (p9.getBoundingClientRect().height > limit + 2) res.behaviour.push(`the open sheet is ${Math.round(p9.getBoundingClientRect().height)}px tall, over ${Math.round(limit)}`);
+      const nb = m9._els.get(someone).getBoundingClientRect(), pt = p9.getBoundingClientRect().top;
+      if (nb.bottom > pt - 11) res.behaviour.push(`opening the sheet left ${someone} under it (${Math.round(nb.bottom)} > ${Math.round(pt)})`);
+      const other = ids.find(x => x !== someone);
+      m9.select(other, { focus: false, animate: false });
+      if (m9.arrangement.sheet !== "open") res.behaviour.push("the sheet folded when another node was selected");
+      // Escape in the open sheet folds it and goes back to the selected node.
+      t9().focus();
+      t9().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true, cancelable: true }));
+      if (m9.arrangement.sheet !== "peek" || m9._idOf.get(m9.root.activeElement) !== other) res.behaviour.push(`Escape in the open sheet left it ${m9.arrangement.sheet}, focus on ${m9.root.activeElement?.className}`);
+      m9._els.get(other).click();
+      if (m9.arrangement.sheet !== "open") res.behaviour.push("activating the selected node again did not open the sheet");
+      m9.destroy(); host9.remove(); scrollTo(0, 0);
+    } catch (e) { res.behaviour.push(`sheet check threw ${e.name}: ${e.message}`); }
+  }
   // The detail's own bullets are discs wherever the panel sits (inline it is inside the lane's list).
   const withList = map.toJSON().nodes.find(n => Array.isArray(n.details) && n.details.length)?.id;
   if (withList) {
     map.select(withList, { focus: false, animate: false });
-    const ul = map.root.querySelector(".panel > ul");
+    const ul = map.root.querySelector(".panel .p-details");
     if (ul && getComputedStyle(ul).listStyleType !== "disc") res.behaviour.push(`detail bullets are ${getComputedStyle(ul).listStyleType}`);
     map.select(null, { focus: false });
   }
-  const dry = map.reorderAll({ dryRun: true }).swaps, revBefore = map.rev;
-  const done = map.reorderAll().swaps;
-  if (dry !== done) res.behaviour.push(`reorderAll counted ${dry} in a dry run and ${done} for real`);
-  if ((done === 0) !== (map.rev === revBefore)) res.behaviour.push("reorderAll changed the revision without changing the order, or the reverse");
-  if (done) map.undo();
+  const dry = map.reorderAll({ dryRun: true }), revBefore = map.rev;
+  const done = map.reorderAll();
+  if (dry.swaps !== done.swaps || dry.layers !== done.layers) res.behaviour.push(`reorderAll counted ${JSON.stringify(dry)} in a dry run and ${JSON.stringify(done)} for real`);
+  if ((done.swaps + done.layers === 0) !== (map.rev === revBefore)) res.behaviour.push("reorderAll changed the revision without changing the order, or the reverse");
+  if (done.swaps + done.layers) map.undo();
   // Presentation: dimmed nodes keep readable text, long unbroken text wraps instead of overflowing,
   // and inline the detail sits inside the selected node's <li> (an <ol> holds only <li>s).
   try {
@@ -229,7 +474,7 @@ try {
     if (dim) {
       const t = dim.querySelector(".t"), cs = getComputedStyle(dim);
       const r = ratio(getComputedStyle(t).color, cs.backgroundColor);
-      if (cs.opacity !== "1" || r < 4.5) res.behaviour.push(`a dimmed node's title has ${r.toFixed(2)}:1 at opacity ${cs.opacity}`);
+      if (cs.opacity !== "1" || r < 4.5) res.behaviour.push(`a dimmed node's title has ${r.toFixed(2)}:1 at opacity ${cs.opacity} (${getComputedStyle(t).color} on ${cs.backgroundColor}, node ${map._idOf.get(dim)})`);
     }
     // A declared lane (automatic lanes and "unassigned" cannot be named in a node).
     const declared = new Set(map.toJSON().lanes?.map(l => l.id) ?? []);
@@ -256,13 +501,30 @@ try {
   map.addEventListener("select", e => sel.push(e.detail.id));
   const q0 = live[2] ?? live[0];
   try {
-    map.select(q0, { focus: false, animate: false });
-    map.renameNode(q0, "audit_sel");
-    if (map.selected !== "audit_sel") res.behaviour.push(`the selection did not follow a rename (${map.selected})`);
-    map.undo();
-    if (map.selected !== null || sel.at(-1) !== null) res.behaviour.push("undo of a rename left a stale selection or said nothing");
+    // A rename keeps the node's element (its live state, its place) and the selection follows it,
+    // whichever way it is renamed: renameNode, undo, redo, apply or batch.
     map.select(q0, { focus: false, animate: false });
     map.setState(q0, { status: "alarm" });
+    const el0 = map._els.get(q0);
+    const same = (id, how) => {
+      if (map._els.get(id) !== el0) res.behaviour.push(`${how}: the node got a new element`);
+      if (map.selected !== id || sel.at(-1) !== id) res.behaviour.push(`${how}: the selection is ${map.selected} (heard ${sel.at(-1)}), not ${id}`);
+      if (!(map._els.get(id)?.getAttribute("part") ?? "").includes("status-alarm")) res.behaviour.push(`${how}: the live state was lost`);
+    };
+    map.renameNode(q0, "audit_sel"); same("audit_sel", "renameNode");
+    map.undo(); same(q0, "undo of a rename");
+    map.redo(); same("audit_sel", "redo of a rename");
+    map.undo();
+    map.apply({ op: "renameNode", from: q0, to: "audit_sel" }); same("audit_sel", "apply of a rename");
+    map.undo();
+    map.batch(b => b.apply({ op: "renameNode", from: q0, to: "audit_sel" })); same("audit_sel", "batch of a rename");
+    map.undo(); same(q0, "undo of a batch rename");
+    // A node removed and another added in its place, with the same fields, is a new node: it does
+    // not inherit the live state of the one that left.
+    const { id: _gone, ...fields } = map.node(q0);
+    map.batch(b => { b.removeNode(q0); b.apply({ op: "addNode", node: { ...fields, id: "audit_twin" }, index: 0 }); });
+    if (map._els.get("audit_twin") === el0 || (map._els.get("audit_twin")?.getAttribute("part") ?? "").includes("status-")) res.behaviour.push("a node added in place of a removed one took over its element or live state");
+    map.undo();
     const back = map.node(q0);
     map.removeNode(q0);
     if (map.selected !== null || sel.at(-1) !== null) res.behaviour.push("removing the selected node left it selected or said nothing");
@@ -405,6 +667,181 @@ try {
     if (raced.atlas.destroyed || !raced.shadowRoot.querySelector(".node")) res.behaviour.push("a destroyed <atlas-map> stays empty when inserted again");
     raced.remove();
   } catch (e) { res.behaviour.push(`element check threw ${e.name}: ${e.message}`); }
+  // Motion, on an animated map (deterministic: animations are paused and moved to a time).
+  res.motion = [];
+  try {
+    const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const hostM = document.createElement("div"); document.querySelector("main").append(hostM);
+    const fresh = (opts = {}) => { hostM.replaceChildren(); const h = document.createElement("div"); hostM.append(h); return new Atlas(h, { document: text, animate: true, ...opts }); };
+    const anims = m => [...m._animations];
+    const at = (m, ms) => { for (const a of anims(m)) { a.pause(); a.currentTime = ms; } };
+    // Positions inside the map (a scroll of the whole page, or a page scroll bar coming or going,
+    // moves the map as one: that is not a node jumping).
+    const box = (m, id) => { const r = m._els.get(id).getBoundingClientRect(), h = m.host.getBoundingClientRect(); return { x: r.left - h.left, y: r.top - h.top }; };
+    const frames = () => new Promise(r => setTimeout(r, 120));
+    // An edit that moves every node: a new first lane (or, in automatic lanes, a new source in front).
+    const shove = m => {
+      if (m._layout.mode === "lanes") return m.addLane({ id: "m_lane", title: "Motion" }, { index: 0 });
+      return m.addNode({ id: "m_new", title: "Motion" }, { edges: [{ from: "m_new", to: m._layout.order.get(m._layout.flow[0].id)[0] }] });
+    };
+    const rootAnims = m => m.root.getAnimations?.() ?? document.getAnimations();
+    let m = fresh();
+    await frames();
+    if (!reduced) {
+      // Reads come before writes: no layout read after the first animation started.
+      const log = [], gb = Element.prototype.getBoundingClientRect, an = Element.prototype.animate;
+      Element.prototype.getBoundingClientRect = function () { log.push("r"); return gb.call(this); };
+      Element.prototype.animate = function (...x) { log.push("a"); return an.apply(this, x); };
+      try { shove(m); } finally { Element.prototype.getBoundingClientRect = gb; Element.prototype.animate = an; }
+      const late = log.slice(log.indexOf("a") + 1).filter(x => x === "r").length;
+      if (log.includes("a") && late) res.motion.push(`an edit read the layout ${late} times after its first animation`);
+      if (!anims(m).length) res.motion.push("an edit that moves nodes did not animate");
+      // Interrupted halfway, the next edit starts every node from where it is seen.
+      const mid = Math.max(...anims(m).map(a => (a.effect.getTiming().delay ?? 0) + 120));
+      at(m, mid);
+      const seen = new Map([...m._els].map(([id]) => [id, box(m, id)]));
+      const ctx = () => { const b = m._board.getBoundingClientRect(), h = m.host.getBoundingClientRect(); return `board ${(b.left - h.left).toFixed(1)},${(b.top - h.top).toFixed(1)} ${b.width.toFixed(1)}x${b.height.toFixed(1)}, scrollLeft ${m._boardWrap.scrollLeft}, ${m._wrap.dataset.mode}/${m._wrap.dataset.panel}`; };
+      const ctx0 = ctx();
+      m.undo();
+      // Nodes in flight never make the box around the board scroll (with classic scroll bars, as on
+      // Windows, a scroll bar would come and go and move every node).
+      const bw = m._boardWrap;
+      if (bw.scrollHeight > bw.clientHeight + 1 || bw.scrollWidth > Math.max(bw.clientWidth, m._board.offsetWidth) + 1) res.motion.push(`nodes in flight overflow the board (${bw.scrollWidth}x${bw.scrollHeight} in ${bw.clientWidth}x${bw.clientHeight})`);
+      let jump = 0, who = "", count = 0;
+      for (const [id, p] of seen) if (m._els.has(id)) { const q = box(m, id), d = Math.hypot(q.x - p.x, q.y - p.y); if (d > 1) count++; if (d > jump) { jump = d; who = `${id} by ${(q.x - p.x).toFixed(1)},${(q.y - p.y).toFixed(1)}`; } }
+      if (jump > 1) res.motion.push(`an edit during a move made ${count} nodes jump, up to ${jump.toFixed(1)}px (${who}; before: ${ctx0}; after: ${ctx()}; ${m._animations.length} animations, ${m._animations.filter(a => a.effect?.target?.dataset?.key).length} on titles)`);
+      m.settle();
+      // A selection made while nodes move waits for them before its wires are measured.
+      const someone = ids.find(x => model.edges.some(e => e.from === x || e.to === x));
+      shove(m);
+      let early = 0;
+      const paint = m._paint.bind(m);
+      m._paint = a => { if (anims(m).some(x => x.playState === "running" || x.playState === "pending")) early++; return paint(a); };
+      m.select(someone, { focus: false });
+      m._paint = paint;
+      if (early) res.motion.push("a selection during a move drew wires on nodes in flight");
+      m.settle(); m.undo(); m.settle();
+      // A node selected with focus while it moves is scrolled into view where it lands.
+      scrollTo(0, 0);
+      shove(m);
+      const target = m._layout.order.get(m._layout.flow.at(-1).id).at(-1);
+      m.select(target);
+      m.settle();
+      const tr = m._els.get(target).getBoundingClientRect();
+      if (tr.top < -1 || tr.bottom > innerHeight + 1) res.motion.push(`${target}, selected while moving, ended off screen (${Math.round(tr.top)}-${Math.round(tr.bottom)} of ${innerHeight})`);
+      m.undo(); m.settle(); scrollTo(0, 0);
+      // A removed node fades out as itself, where it was.
+      const gone = ids.find(x => x !== someone);
+      const was = m._els.get(gone).getBoundingClientRect(), title = m._els.get(gone).textContent;
+      m.removeNode(gone);
+      const ghost = [...m.root.querySelectorAll(".ghosts > .node, .board > .node[aria-hidden]")][0];
+      if (!ghost) res.motion.push("a removed node left no ghost");
+      else {
+        const g = ghost.getBoundingClientRect();
+        if (ghost.textContent !== title) res.motion.push(`the ghost of ${gone} reads "${ghost.textContent}"`);
+        if (Math.abs(g.left - was.left) > 0.5 || Math.abs(g.top - was.top) > 0.5) res.motion.push(`the ghost of ${gone} is ${(g.left - was.left).toFixed(1)},${(g.top - was.top).toFixed(1)}px off`);
+      }
+      m.settle(); m.undo(); m.settle();
+      // Lane titles travel with their nodes: at the start of a move a title keeps its distance to its node.
+      const lanes = m.toJSON().lanes?.filter(l => (l.kind ?? "flow") === "flow") ?? [];
+      if (lanes.length && res.mode === "flow" && m._layout.mode === "lanes") {
+        const l0 = lanes[0].id, n0 = m._layout.order.get(l0)[0];
+        const tEl = () => m.root.querySelector(`.lane[data-lane="${CSS.escape(l0)}"] .lane-title`);
+        const gap = () => { const a = tEl().getBoundingClientRect(), b = m._els.get(n0).getBoundingClientRect(); return [b.left - a.left, b.top - a.top]; };
+        const g0 = gap();
+        m.addLane({ id: "m_lane", title: "Motion" }, { index: 0 });
+        at(m, 0);
+        const g1 = gap();
+        if (Math.hypot(g1[0] - g0[0], g1[1] - g0[1]) > 1) res.motion.push(`a lane title left its node at the start of a move (${(g1[0] - g0[0]).toFixed(0)},${(g1[1] - g0[1]).toFixed(0)}px)`);
+        m.settle(); m.undo(); m.settle();
+      }
+      // Wires: an edit that changes none of the selection's wires leaves them alone; one that moves
+      // them reshapes them with the nodes where the browser can animate a path.
+      if (res.mode === "flow") {
+        m.select(someone, { focus: false, animate: false });
+        const before = [...m.root.querySelectorAll(".wire")];
+        const other = ids.find(x => x !== someone && !model.edges.some(e => (e.from === x && e.to === someone) || (e.to === x && e.from === someone)));
+        m.updateNode(other, { details: ["motion audit"] });
+        m.settle();
+        const after = [...m.root.querySelectorAll(".wire")];
+        if (before.length !== after.length || before.some((w, i) => w !== after[i])) res.motion.push("an edit that changed no wire drew the wires again");
+        m.undo(); m.settle();
+        const mover = someone;
+        if (CSS.supports("d", 'path("M0 0")')) {
+          // Every node moves: the selected node's wires that keep their shape must reshape.
+          const { sameShape } = await import("../../src/motion.js");
+          m.select(mover, { focus: false, animate: false });
+          const key = w => `${w.k}:${w.from}>${w.to}`;
+          const was = new Map(m._wires.map(w => [key(w), w.screen]));
+          shove(m);
+          const reshaped = anims(m).filter(a => a.effect.target?.classList?.contains("wire")).length;
+          m.settle();
+          const should = m._wires.filter(w => was.has(key(w)) && sameShape(was.get(key(w)), w.screen) && JSON.stringify(was.get(key(w))) !== JSON.stringify(w.screen));
+          if (should.length && !reshaped) res.motion.push(`${should.length} wires of ${mover} kept their shape but did not reshape with it`);
+          // A reshaped wire is drawn whole: the dashes of its first trace were cut to its old length.
+          for (const w of m.root.querySelectorAll(".wire")) {
+            const dash = getComputedStyle(w).strokeDasharray;
+            const first = parseFloat(dash);
+            if (dash !== "none" && !w.classList.contains("backward") && first + 1 < w.getTotalLength()) { res.motion.push(`a reshaped wire shows ${first.toFixed(0)} of its ${w.getTotalLength().toFixed(0)}px`); break; }
+          }
+          m.undo(); m.settle();
+        }
+      }
+    } else {
+      shove(m);
+      const travel = anims(m).filter(a => a.effect.getKeyframes().some(k => k.transform && k.transform !== "none"));
+      if (travel.length) res.motion.push(`under reduced motion an edit moved ${travel.length} things`);
+      m.settle(); m.undo(); m.settle();
+    }
+    // The detail panel opening below the board does not cut the wires being traced, and a map built
+    // with a selection traces it.
+    if (res.mode === "flow" && !reduced) {
+      const someone = ids.find(x => model.edges.some(e => e.from === x || e.to === x));
+      m = fresh({ selected: someone });
+      await frames();
+      if (!m.root.querySelector(".wire.draw")) res.motion.push("the selection a map starts with was never traced");
+      m.select(null, { focus: false });
+      await frames();
+      for (const id of ids.filter(x => model.edges.some(e => e.from === x || e.to === x)).slice(0, 6)) {
+        m.select(id, { focus: false });
+        await frames();
+        if (!m.root.querySelector(".wire.draw")) { res.motion.push(`selecting ${id} (panel ${m._wrap.dataset.panel}): its wires stopped tracing`); break; }
+      }
+    }
+    // The rows follow a change of the board's width (WebKit kept them at their old heights, and
+    // nodes spilled into the next row).
+    if (res.mode === "flow") {
+      m = fresh();
+      await frames();
+      hostM.style.width = `${Math.round(hostM.getBoundingClientRect().width * 0.8)}px`;
+      await frames();
+      // What the resize observer does on the next frame (headless Chrome may produce no frame).
+      m._applyMode(); m._refreshRows?.(); m._placePanel();
+      const live = m._board.getBoundingClientRect().height;
+      m.load(text);
+      const built = m._board.getBoundingClientRect().height;
+      hostM.style.width = "";
+      if (Math.abs(live - built) > 1) res.motion.push(`after the board got narrower its rows were ${(live - built).toFixed(1)}px off`);
+    }
+    // Selecting starts few transitions, not one per node.
+    m.select(ids[1] ?? ids[0], { focus: false });
+    const css = rootAnims(m).filter(a => a instanceof CSSTransition).length;
+    if (css > 3) res.motion.push(`a selection started ${css} CSS transitions`);
+    // animate: false means no motion at all.
+    m = fresh({ animate: false });
+    shove(m);
+    if (anims(m).length || rootAnims(m).some(a => !(a instanceof CSSTransition))) res.motion.push("animate: false still animated an edit");
+    // A destroyed map changes nothing and says nothing.
+    m = fresh();
+    let heard = 0;
+    m.addEventListener("change", () => heard++); m.addEventListener("select", () => heard++);
+    shove(m);
+    heard = 0;
+    m.destroy();
+    m.undo(); m.addNode({ id: "m_after" }); m.select(ids[0]); m.load(text);
+    if (heard) res.motion.push(`a destroyed map fired ${heard} events`);
+    hostM.remove();
+  } catch (e) { res.motion.push(`motion check threw ${e.name}: ${e.message}`); }
   out(res);
 } catch (e) {
   out({ error: String(e && e.stack || e) });

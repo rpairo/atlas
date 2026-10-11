@@ -57,6 +57,12 @@ export interface Node {
   type?: string;
   /** Pinned nodes keep their place in `reorderAll()`. */
   pinned?: boolean;
+  /**
+   * The node's column on a board without flow lanes (a whole number from 0), written by Atlas so
+   * that edits keep the drawing stable; only the order of the numbers matters. Ignored in bands and
+   * on boards with flow lanes.
+   */
+  layer?: number;
   [key: string]: unknown;
 }
 
@@ -300,6 +306,8 @@ export interface Layout {
   laneOf: Map<string, string>;
   /** Lane id → rank along the flow (-1 for the `before` band). */
   rank: Map<string, number>;
+  /** Without flow lanes: node id → its computed layer (column), for nodes outside the bands. Empty otherwise. */
+  layers: Map<string, number>;
   /** Lane id → node ids in drawing order. */
   order: Map<string, string[]>;
   /** Node id → row slot. */
@@ -324,6 +332,12 @@ export declare function bestInsertion(model: Model, nodeId: string, near?: numbe
 
 /** @experimental How many pairs of nodes swap places between two layouts. */
 export declare function inversions(before: Pick<Layout, "order">, after: Pick<Layout, "order">): number;
+/**
+ * @experimental The model with each node's computed layer saved in `layer` (boards without flow
+ * lanes; removed elsewhere), as Atlas saves it after every edit. For code that edits with `apply()`
+ * without an `Atlas`.
+ */
+export declare function withLayers(model: Model, layout: Layout): Model;
 
 /** @experimental A point in flow coordinates: `u` along the flow, `v` across it. */
 export interface FlowPoint {
@@ -418,6 +432,30 @@ export interface Labels {
   board: string;
   /** Accessible name of the detail panel. Default `Detail`. */
   detail: string;
+  /**
+   * What a selection says to screen readers, with `{title}`, `{incoming}` and `{outgoing}` (other
+   * nodes, each counted once). Without it: "Triage: 5 incoming, 2 outgoing" built from `incoming`
+   * and `outgoing`. A self-loop adds `selfLoop`.
+   */
+  summary?: string;
+  /** A keyboard step to an incoming connection, with `{n}`, `{total}`, `{hub}`. Default `Incoming {n} of {total} into {hub}`. */
+  inStep: string;
+  /** A keyboard step to an outgoing connection. Default `Outgoing {n} of {total} from {hub}`. */
+  outStep: string;
+  /** No incoming connection to step to, with `{hub}`. Default `{hub}: no incoming connections`. */
+  noneIn: string;
+  /** No outgoing connection to step to. Default `{hub}: no outgoing connections`. */
+  noneOut: string;
+  /** No connection at all. Default `{hub}: no connections`. */
+  noneAll: string;
+  /** Said when Escape clears the selection. Default `Selection cleared`. */
+  cleared: string;
+  /** The board's description: the keys it takes. */
+  keys: string;
+  /** Said by `nextMark()` when focus stays outside the map, with `{n}`, `{total}`, `{title}`. Default `{n} of {total}: {title}`. */
+  markStep: string;
+  /** How a marked node is described to screen readers. Default `Match {n} of {total}`. */
+  marked: string;
 }
 
 /** Live content of a node, set with `setState()`. */
@@ -431,12 +469,12 @@ export interface AtlasOptions {
   document?: Board | string;
   /** Node selected at start (default: `meta.selected`). */
   selected?: string;
-  /** `false` hides the detail panel. Default `"auto"`. */
-  panel?: "auto" | false;
+  /** Where the detail goes: `"auto"` (by the room), forced to `"side"`, `"below"` or `"sheet"`, or `false` (none). Default `"auto"`. */
+  panel?: "auto" | "side" | "below" | "sheet" | false;
   labels?: Partial<Labels>;
   /** Custom node content: fill `button` (it receives a copy of the node and its live state). */
   renderNode?: (node: Node, button: HTMLButtonElement, live: LiveState) => void;
-  /** Trace wires when selecting. Default `true`. */
+  /** Motion: wires trace when selecting, and edits move nodes into place. `false` turns all of it off. Default `true`. */
   animate?: boolean;
   /** Render into a shadow root of the host. Default `true`. */
   shadow?: boolean;
@@ -467,10 +505,30 @@ export interface ErrorDetail {
   errors: Finding[];
 }
 
-/** Events of an Atlas instance. The host element receives them too, as `atlas-change` and `atlas-select`. */
+export interface MarkDetail {
+  /** The marked nodes, in reading order. */
+  ids: string[];
+  /** The current mark (`nextMark()`), or null. */
+  current: string | null;
+}
+
+/** @experimental How the map is laid out now. */
+export interface Arrangement {
+  /** Lanes side by side (`flow`), side by side but scrolling sideways (`scroll`), or one after another (`stack`). */
+  board: "flow" | "scroll" | "stack";
+  /** Where the detail is. */
+  panel: "side" | "below" | "sheet" | "inline" | "none";
+  /** The sheet's state, or null when the detail is not a sheet. */
+  sheet: "peek" | "open" | null;
+}
+
+/** Events of an Atlas instance. The host element receives them too, as `atlas-<name>`. */
 export interface AtlasEventMap {
   change: CustomEvent<ChangeDetail>;
   select: CustomEvent<SelectDetail>;
+  mark: CustomEvent<MarkDetail>;
+  /** @experimental */
+  arrange: CustomEvent<Arrangement>;
 }
 
 /** The working copy inside `batch()`: each call applies at once, and the batch commits as one step. */
@@ -514,13 +572,19 @@ export declare class Atlas extends EventTarget {
   /** Increases on every load, edit, undo and redo. */
   get rev(): number;
   get selected(): string | null;
+  /** The marked nodes, in reading order (see `mark()`). */
+  get marked(): string[];
+  /** The current mark (see `nextMark()`), or null. */
+  get currentMark(): string | null;
+  /** @experimental How the map is laid out now. */
+  get arrangement(): Arrangement;
   /** Warnings of the current board. */
   get warnings(): Finding[];
   /** A copy of the node, or `null`. */
   node(id: string): Node | null;
   /** Copies of the edges that start or end at the node. */
   edges(id: string): ModelEdge[];
-  /** Ids of the nodes whose title, subtitle or details contain `text` (case-insensitive). */
+  /** Ids of the nodes whose title, subtitle (the live one too) or details contain `text`, ignoring case and accents, in reading order. Blank text finds nothing. */
   find(text: string): string[];
   suggestions(): Suggestion[];
 
@@ -563,7 +627,8 @@ export declare class Atlas extends EventTarget {
   unpin(id: string): number;
   setMeta(changes: Changes<Meta>): number;
   /** Reorders every lane for the fewest crossings; pinned nodes keep their place. */
-  reorderAll(options?: { dryRun?: boolean }): { swaps: number };
+  /** `swaps`: pairs of nodes that change places in a lane; `layers`: nodes that change layer (boards without flow lanes). */
+  reorderAll(options?: { dryRun?: boolean }): { swaps: number; layers: number };
   /** `false` when there is nothing to undo. */
   undo(): boolean;
   /** `false` when there is nothing to redo. */
@@ -581,7 +646,18 @@ export declare class Atlas extends EventTarget {
    */
   setState(id: string, state?: { subtitle?: string | number | null; status?: string | null }): void;
   /** Selects a node (or none), shows its wires and its detail. */
-  select(id: string | null, options?: { focus?: boolean; animate?: boolean }): void;
+  /**
+   * Selects a node (null clears). `focus` (default true) moves keyboard focus to it; `reveal`
+   * (default: as `focus`) scrolls it into view; `announce` (default false) makes screen readers say
+   * its summary, as a person's selection does.
+   */
+  select(id: string | null, options?: { focus?: boolean; animate?: boolean; reveal?: boolean; announce?: boolean }): void;
+  /** Marks nodes (search results, filters); unknown ids are ignored, null or [] clears. Never selects. */
+  mark(ids: Iterable<string> | null): void;
+  /** Makes the next (step 1) or previous (-1) mark current, scrolls it into view and gives it the tab stop; `focus` also focuses it. Returns its id, or null without marks. */
+  nextMark(step?: number, options?: { focus?: boolean }): string | null;
+  /** Opens (or folds, with false) the detail when it is a sheet. Returns its state. */
+  openDetail(open?: boolean): "open" | "peek";
   /** Finishes any running transition at once and redraws the wires. */
   settle(): void;
   /** Stops observing and empties `root`. Final: a destroyed instance draws nothing more. */
@@ -631,6 +707,8 @@ declare global {
   interface HTMLElementEventMap {
     "atlas-change": CustomEvent<ChangeDetail>;
     "atlas-select": CustomEvent<SelectDetail>;
+    "atlas-mark": CustomEvent<MarkDetail>;
+    "atlas-arrange": CustomEvent<Arrangement>;
     "atlas-error": CustomEvent<ErrorDetail>;
   }
 }

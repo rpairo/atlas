@@ -13,7 +13,16 @@ structure first: ELK partitions and layer constraints, Graphviz `rank`, yFiles l
 constraints and its from-sketch incremental mode. Atlas follows that order:
 
 1. **Declared lane** (a hard constraint, like an ELK partition). Without lanes, layers come from the
-   relations: cycles broken by depth-first search in document order, layers by longest path.
+   relations: the first time, cycles broken by depth-first search in document order and layers by
+   longest path. Atlas then saves each node's layer in the board and keeps it through edits, like
+   ELK's interactive layerer and yFiles' incremental mode: only edges inside a strongly connected
+   component that go against the saved order are reversed, and when an edit makes the saved layers
+   impossible the nodes after the conflict are pushed forward or the ones before it pulled back,
+   whichever moves fewer (new nodes take the column after their inputs, or a new column between).
+   A graph-drawing review measured it on 800 random boards and 6,000 edits: edits that reorder some
+   pair of columns fall from about 50% to 22%, within a point of what any honest layering must
+   reorder (network simplex from scratch and minimum-width layering did no better than longest
+   path, because they recompute everything from the edges).
 2. **Constraints**: groups contiguous, then `before`, `first`, `last` by a stable topological sort, so
    constraints win while moving as little as possible. Contradictions are rejected by validation.
 3. **The sketch**: the document order. Studies on the mental map (Misue, Eades, Lai, Sugiyama 1995;
@@ -44,12 +53,27 @@ once would need the polynomial ordering of Wybrow et al. (2009) or Hegemann & Wo
 
 ## Animation
 
-Edits animate in stages, remove → move → add (Bach et al., GraphDiaries; Crnovrsanin et al. 2020),
-with FLIP on the Web Animations API: 200, 450 and 250 ms (900 ms for "reorder all"). Wires hide while
-nodes move and trace again afterwards at constant speed (1,150 px/s, bundles 90 ms apart, merging
-inputs timed to arrive together), so branches of a bundle draw as one. View Transitions were rejected:
-they snapshot the SVG and the wires would not follow the nodes. Reduced motion disables tracing and
-movement.
+Edits animate in stages, exit → move → enter (Bach et al., GraphDiaries; Crnovrsanin et al. 2020),
+each skipped when empty, with FLIP on the Web Animations API (`src/motion.js` plans, `atlas.js`
+plays). Every position is read before any animation starts: reading after a write makes the browser
+lay the page out again, once per node, which froze Chrome for 200 ms on 300 nodes. The exit takes
+150 ms and the enter 200 ms (Material: exits shorter than entrances); a move lasts
+`clamp(250, 150 + 20·√D, 700)` ms for its longest travel D, so longer travel takes longer and an edit
+and its undo take the same time. When at least three nodes change lane and three change row, the
+move runs along the flow first, then across it (staging, Heer and Robertson 2007), instead of every
+node cutting diagonally through the others. There is no per-node stagger: Chevalier, Dragicevic and
+Franconeri (2014) found it of no help for tracking. Lane titles and group boxes move with their
+nodes. A move cut by another edit continues from where the nodes are seen.
+
+Wires that keep their shape (same points, every segment keeping its orientation) reshape with the
+nodes by animating the path's `d` where the browser can (Chrome, Edge, Firefox): moving each vertex
+in a straight line keeps every segment straight. Unchanged wires stay; the others fade out and trace
+again once the nodes are in place, at constant speed (1,150 px/s, bundles 90 ms apart, merging
+inputs timed to arrive together). View Transitions were measured and rejected again: scoped to the
+board they cost 50-100 ms long tasks throughout, clicks during them land on the page, a second edit
+skips the first, and wires are snapshots. Under reduced motion nothing travels (Apple's guidance:
+removing animation entirely hurts usability): changed nodes get a tint that fades, new ones fade in,
+wires appear at once. `animate: false` turns all motion off.
 
 ## Architecture
 
@@ -77,4 +101,6 @@ milliseconds with the best order found, instead of trying every order.
 - Hegemann, Wolff (2023). A simple pipeline for orthogonal graph drawing. GD.
 - Heer, Robertson (2007). Animated transitions in statistical data graphics. InfoVis.
 - Crnovrsanin et al. (2020). Staged animation strategies for online dynamic networks.
+- Chevalier, Dragicevic, Franconeri (2014). The not-so-staggering effect of staggered animated transitions.
+- North (1995). Incremental layout in DynaDAG. GD.
 - Eclipse Layout Kernel, Layered algorithm reference; yFiles incremental hierarchical layout.

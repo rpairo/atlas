@@ -40,7 +40,8 @@ python3 -m http.server 8000
 | `node test/bench-route.mjs [board] [--vertical]` | Routing time and clashes for every selection of a board |
 | `npx --yes -p typescript@<version in ci.yml> tsc -p test/types` | The type declarations against `test/types/usage.ts` |
 | `scripts/audit.sh [board] [widths…]` | The browser audit, below |
-| `node scripts/audit-browsers.mjs [firefox] [webkit]` | The same audit in Firefox and WebKit, through Playwright |
+| `node scripts/audit-browsers.mjs [chrome] [msedge] [firefox] [webkit] [--scrollbars]` | The same audit through Playwright, with the emulations audit.sh cannot do |
+| `node test/compat/fingerprint.mjs <release checkout>` | Fingerprints of placement and routing from a release (`test/compat/v0.3.2.json`, compared by `npm test`) |
 
 ### Browser audit
 
@@ -50,12 +51,18 @@ at each width, selects every node of the board and checks that:
 - no wire crosses a node, no two wires cross or run closer than 5 px, and every arrow has room;
 - nothing leaves the board, and selecting never moves a node;
 - adding a node works, undo restores the exact document and renaming keeps the geometry;
-- the theme paints the board, and the detail drawer covers it;
+- the theme paints the board; the detail sheet covers it, and a detail below the board does not;
 - when stacked, the lanes form one readable column, nothing overlaps, and the detail sits under
   the selected node;
 - a refused edit leaves the map usable, warnings follow undo, every arrow key moves the focus the
   way of the arrow, and `reorderAll()` counts what it changes;
-- a node selected or reached by keyboard ends up on screen and clear of the detail drawer;
+- a node selected or reached by keyboard ends up on screen and clear of the detail sheet;
+- groups keep one column per lane and their legends sit on nothing;
+- edits read the layout before animating, a move cut by another edit continues from where the nodes
+  are, titles glide with their nodes, wires that keep their shape reshape, renames keep their node
+  through undo, `animate: false` and reduced motion move nothing, and a destroyed map stays quiet;
+- Alt steps reach every connection and describe each one, Escape goes back then clears, marks and
+  the sheet behave, and in forced colours the selection's states differ by more than colour;
 - the selection, focus and live state follow edits, `<atlas-map>` loads the latest `src`, and
   dimmed nodes keep 4.5:1 text contrast.
 
@@ -72,12 +79,15 @@ relative to `test/browser/`. On macOS the script uses Google Chrome from
 `/Applications`; elsewhere set `CHROME` to the browser's path, and `CHROME_FLAGS` for extra flags.
 `scripts/shot.sh <page?query> <width> <height> <out.png>` takes a screenshot the same way.
 
-The same audit runs in Firefox and WebKit (Safari's engine) with Playwright, which is not a
-dependency of Atlas:
+The same audit runs through Playwright, which is not a dependency of Atlas, in the installed Chrome
+and Edge (with forced colours, reduced motion, scale factors and a dark system emulated, which the
+headless page of audit.sh cannot do) and in Firefox and WebKit (Safari's engine). `--scrollbars`
+keeps the classic scroll bars that headless Chromium hides, as on Windows. Every list the audit page
+returns is a list of problems, and fails the run when it is not empty:
 
 ```bash
 npm install --no-save playwright@1.63.0 && npx playwright install firefox webkit
-node scripts/audit-browsers.mjs firefox webkit
+node scripts/audit-browsers.mjs chrome firefox webkit
 ```
 
 The audit is the closest thing to looking at the map, but it is not the same: before calling a
@@ -107,9 +117,9 @@ Maintainers only.
    git tag -a vX.Y.Z -m "Atlas X.Y.Z" && git push origin vX.Y.Z
    ```
 
-   `.github/workflows/release.yml` checks that the tag matches the version and is on `main`, runs
-   the tests, rebuilds, and publishes the GitHub release with the built files and their integrity
-   hashes.
+   `.github/workflows/release.yml` runs the whole CI on the tagged commit, checks that the tag
+   matches the version and is on `main`, rebuilds, attests the built files' provenance, and only
+   then publishes the GitHub release with the built files and their integrity hashes.
 
 Versions follow [SemVer](https://semver.org/) as described in
 [docs/api.md](docs/api.md#stability). Atlas is not published to the npm registry.

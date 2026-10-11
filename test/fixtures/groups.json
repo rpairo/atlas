@@ -1,0 +1,48 @@
+{
+  "format": "atlas/1",
+  "meta": { "title": "Order fulfilment", "selected": "pick" },
+  "lanes": [
+    { "id": "in", "title": "Intake" },
+    { "id": "work", "title": "Fulfilment" },
+    { "id": "out", "title": "Delivery" },
+    { "id": "ops", "title": "Operations", "kind": "after" }
+  ],
+  "groups": [
+    { "id": "billing", "title": "Billing" },
+    { "id": "payments", "title": "Payments and refunds, including chargebacks from card networks", "parent": "billing" },
+    { "id": "warehouse", "title": "Warehouse" },
+    { "id": "packing", "title": "Packing", "parent": "warehouse" },
+    { "id": "carriers" }
+  ],
+  "nodes": [
+    { "id": "web", "title": "Web shop", "lane": "in" },
+    { "id": "invoice", "title": "Invoice", "lane": "in", "group": "billing" },
+    { "id": "charge", "title": "Charge card", "lane": "in", "group": "payments" },
+    { "id": "refund", "title": "Refund", "lane": "in", "group": "payments" },
+    { "id": "pick", "title": "Pick items", "lane": "work", "group": "warehouse" },
+    { "id": "pack", "title": "Pack box", "lane": "work", "group": "packing" },
+    { "id": "label", "title": "Print label", "lane": "work", "group": "packing" },
+    { "id": "ledger", "title": "Ledger", "lane": "work", "group": "billing" },
+    { "id": "post", "title": "Post office", "lane": "out", "group": "carriers" },
+    { "id": "courier", "title": "Courier", "lane": "out", "group": "carriers" },
+    { "id": "track", "title": "Tracking", "subtitle": "customer emails", "lane": "out" },
+    { "id": "stock", "title": "Stock levels", "lane": "ops" },
+    { "id": "support", "title": "Support", "lane": "ops" }
+  ],
+  "edges": [
+    { "from": "web", "to": "invoice" },
+    { "from": "invoice", "to": "charge" },
+    { "from": "charge", "to": "pick", "label": "paid" },
+    { "from": "refund", "to": "ledger" },
+    { "from": "charge", "to": "ledger" },
+    { "from": "pick", "to": "pack" },
+    { "from": "pack", "to": "label" },
+    { "from": "label", "to": "post" },
+    { "from": "label", "to": "courier" },
+    { "from": "post", "to": "track" },
+    { "from": "courier", "to": "track" },
+    { "from": "pick", "to": "stock" },
+    { "from": "track", "to": "support" },
+    { "from": "support", "to": "refund" }
+  ]
+}

@@ -7,6 +7,102 @@ public API is.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-11
+
+Five specialist reviews (graph drawing, motion, visual design, interaction and accessibility, QA)
+and an independent critique of the joint plan, tuned for Chrome and Edge first. Every fix comes with
+a browser-audit or Node check that fails on 0.3.2.
+
+### Added
+
+- **Saved layers.** On boards without flow lanes Atlas saves each node's column in a new optional
+  field, `layer`, and keeps those columns through edits wherever the edges allow: over 1,480 random
+  edits the drawing reshuffles after 15.5% of them instead of 38.4%; removing an edge off every
+  cycle or adding a node with one edge never does. Boards without saved layers are laid out exactly
+  as by 0.3.2 (a fingerprint test against that release). `layout()` returns `layers`; `withLayers()`
+  saves them for code that edits with `apply()` alone. Still `atlas/1`.
+- **Marks** for search results and filters: `mark(ids)`, `nextMark(step, { focus })`, the `marked`
+  and `currentMark` getters, the `mark` event, the parts `marked`, `marked-current` and `selected`,
+  `--atlas-mark` and `--atlas-mark-dot`.
+- **The detail as a sheet.** When the side panel does not fit and the board and the open detail do
+  not fit the window together, the detail is a sheet at the foot of the window, folded to a 48 px
+  head (lane, title, counts) and opened by its head, by activating the selected node again or by
+  `openDetail()`. When they fit, the detail sits under the board in the page. The `panel` option
+  takes `"side"`, `"below"` and `"sheet"`; `arrangement` and the `arrange` event (experimental) say
+  which is in use; `--atlas-sheet-height`, `--atlas-sheet-bottom`, `--atlas-panel-top`.
+- **Keyboard steps through connections.** Alt with Down and Up steps through every connection of the
+  selected node, Alt with Right and Left through its outgoing and incoming ones; each neighbour is
+  described to screen readers ("Incoming 3 of 5 into Triage: silences"); Escape goes back to the
+  selected node, then clears it. Before, Alt with an arrow followed a chain of first connections and
+  never reached most of them (77 of 96 node and direction groups on the incident example).
+- `select(id, { reveal, announce })`; labels `summary` (a template), `inStep`, `outStep`, `noneIn`,
+  `noneOut`, `noneAll`, `cleared`, `keys`, `markStep`, `marked`; `--atlas-focus`, the focus ring's
+  own colour.
+- Forced colours (Windows contrast themes): the selection and its incoming and outgoing neighbours
+  differ by the shape of a ring inside the node, marks use `Mark`, wires use system colours.
+
+### Changed
+
+- **Motion.** Edits read every position before starting any animation: a 300-node edit took
+  222-237 ms in Chrome with frames of up to 233 ms; now 24-29 ms, every frame under 17 ms. A move
+  lasts as long as its longest travel needs (250-700 ms), so an edit and its undo take as long; when
+  many nodes change lane and row they move along the flow first, then across it; no per-node stagger.
+  Lane titles and group boxes glide with their nodes; wires that keep their shape reshape with them
+  (Chrome, Edge, Firefox), unchanged wires stay, the rest trace again; a move cut by another edit
+  continues from where the nodes are seen (it jumped up to 219 px).
+- `animate: false` turns off all motion, edits included (it only stopped the tracing).
+- Under reduced motion, nodes that moved or changed are marked with a fading tint instead of
+  appearing without a cue.
+- A rename keeps the node's element, live state, selection and marks also through undo, redo,
+  `apply()` and `batch()` (renames are recorded in the history).
+- Screen readers hear a selection's summary when a person selects, not when the page's code does
+  (load with `meta.selected`, `select()`), unless `select(id, { announce: true })`; the summary
+  counts each neighbour once and mentions a self-loop; the same text twice is said twice. The
+  selected node is `aria-current` instead of every node being a toggle button (`aria-pressed`).
+- The detail lists one button per other node, in reading order (parallel edges join their labels).
+- `find()` ignores accents, searches the live subtitle, returns ids in reading order and finds
+  nothing for blank text (it returned every node).
+- `reorderAll()` also lays out the columns of boards without flow lanes afresh and returns
+  `{ swaps, layers }`.
+- `load()` draws the layers its tidy ordered for (on 4% of the graph review's 400 random boards without lanes it drew others).
+- Atlas writes `layer` into boards without flow lanes, a one-time difference in saved boards. A
+  board that stores its own whole-number `layer` there has it replaced; any other value is kept and
+  ignored, with an `ignored` warning.
+- Group boxes and legends are list items hidden from assistive technology (they were `<div>`s inside
+  an `<ol>`).
+
+### Fixed
+
+- A group pushed its lane's nodes into a second column (or row); group legends sat on nodes and
+  lane titles, and nested groups' legends on each other. Legends now have grid rows of their own.
+- In WebKit (Safari) the rows of the board kept their old heights when its width changed (on load
+  with a side panel, on every resize) and nodes spilled into the next row.
+- The detail panel below the board cut the wires being traced (on 7 of 9 selections, and always
+  the initial one): wires are redrawn only when the board's geometry changes.
+- A selection made while nodes moved drew wires on boxes in flight; a node selected or reached by
+  keyboard while moving was scrolled to where it was passing.
+- The ghost of a removed node was an empty box, 1 px off; it is now a copy of the node.
+- Selecting started a CSS transition on every node (141 on the incident example).
+- A destroyed map still edited and fired events.
+- Hovering a node that stepped back showed nothing.
+- The focus ring was the blue of "incoming".
+- A very long unbroken title widened the detail panel past the screen.
+- Alt with Left or Right inside the map no longer goes Back or Forward in Chrome and Edge.
+- With classic scroll bars (Windows), nodes in flight made the box around the board scroll for the
+  length of a move: a scroll bar flashed on edits and every node jumped 12-24 px. The board now
+  clips its overflow.
+
+### Development
+
+- CI: the browser audit also runs through Playwright in Chrome (forced colours, reduced motion,
+  scale factors 1.25 and 1.5, a dark system, real frames) and in Edge on Windows with classic scroll
+  bars; every list the audit returns fails the run when not empty.
+- The release workflow runs the whole CI on the tagged commit before publishing, and attests the
+  built files' provenance (`gh attestation verify`).
+- A fingerprint test compares placement and routing with v0.3.2 on 66 boards; package tests check
+  that docs and types list every public member and label, that every version a reader copies is
+  the package's, and a gzip size budget.
+
 ## [0.3.2] - 2026-10-11
 
 ### Fixed
@@ -196,7 +292,8 @@ Not published. Fixes found by embedding Atlas in a host page.
 Not published. First version: the `atlas/1` format with validation and edit operations, placement,
 orthogonal routing, the `Atlas` class and the `<atlas-map>` element, single-file builds and tests.
 
-[Unreleased]: https://github.com/rpairo/atlas/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/rpairo/atlas/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/rpairo/atlas/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/rpairo/atlas/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/rpairo/atlas/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/rpairo/atlas/compare/v0.2.0...v0.3.0
