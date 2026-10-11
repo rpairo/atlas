@@ -207,6 +207,8 @@ try {
   } catch (e) { res.behaviour.push(`map broken after a refused rename: ${e.message}`); }
   map.connect(p, p);
   const self = map.warnings.some(w => w.code === "self");
+  map.select(p, { focus: false, animate: false });
+  if (!map._status.textContent.includes(map.labels.selfLoop)) res.behaviour.push(`the summary of a node that feeds itself does not say so (${map._status.textContent})`);
   map.undo();
   if (!self || map.warnings.some(w => w.code === "self")) res.behaviour.push("warnings do not follow undo");
   const centre = id => { const r = map._els.get(id).getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
@@ -219,6 +221,37 @@ try {
     if (to === undefined || to === id) continue;
     const [ax, ay] = centre(id), [bx, by] = centre(to);
     if ((bx - ax) * dx + (by - ay) * dy <= 0) res.behaviour.push(`${key} from ${id} went to ${to}, which is not that way`);
+  }
+  // Assistive technology: the selection is the one current node (not a toggle on every node), the
+  // same summary twice is said twice, and find() ignores accents and finds nothing for blank text.
+  try {
+    map.select(live[0], { focus: false, animate: false });
+    const current = [...map._els.values()].filter(b => b.getAttribute("aria-current") === "true");
+    if (current.length !== 1 || map._idOf.get(current[0]) !== live[0]) res.behaviour.push(`${current.length} nodes are aria-current`);
+    if ([...map._els.values()].some(b => b.hasAttribute("aria-pressed"))) res.behaviour.push("nodes still carry aria-pressed");
+    const said = map._status.textContent;
+    map.select(live[0], { focus: false, animate: false });
+    if (map._status.textContent !== "") res.behaviour.push("the same summary twice was not said again (the live region did not empty)");
+    await new Promise(r => setTimeout(r, 200));
+    if (map._status.textContent !== said) res.behaviour.push(`after emptying, the live region says "${map._status.textContent}"`);
+    if (map.find("").length || map.find("   ").length) res.behaviour.push(`find("") found ${map.find("").length} nodes`);
+    const t0 = map.node(live[0]).title ?? live[0];
+    const accented = t0.replace(/[aeiou]/i, ch => ({ a: "á", e: "é", i: "í", o: "ó", u: "ú" })[ch.toLowerCase()] ?? ch);
+    if (!map.find(accented.toUpperCase()).includes(live[0])) res.behaviour.push(`find("${accented.toUpperCase()}") misses ${live[0]}`);
+    map.select(null, { focus: false });
+  } catch (e) { res.behaviour.push(`assistive check threw ${e.name}: ${e.message}`); }
+  // Forced colours (Windows contrast themes; Chromium emulates them): the selection, an incoming
+  // and an outgoing neighbour and the rest differ by more than colour.
+  if (matchMedia("(forced-colors: active)").matches) {
+    const hub = live.find(x => { const m = map.toJSON(); return m.edges.some(e => e.to === x && e.from !== x) && m.edges.some(e => e.from === x && e.to !== x); });
+    if (hub) {
+      map.select(hub, { focus: false, animate: false });
+      const look = b => { const c = getComputedStyle(b, "::before"); return c.content === "none" || c.content === "normal" ? "none" : `${c.borderTopStyle} ${c.borderTopWidth}`; };
+      const pick = sel => [...map._els.values()].find(b => b.matches(sel));
+      const looks = [".on", ".near-in:not(.near-out)", ".near-out:not(.near-in)", ":not(.on, .near-in, .near-out)"].map(sel => pick(sel) ? look(pick(sel)) : null).filter(Boolean);
+      if (new Set(looks).size !== looks.length) res.behaviour.push(`in forced colours the states look alike: ${looks.join(" | ")}`);
+      map.select(null, { focus: false });
+    }
   }
   // Visibility: a node selected with focus, or reached with an arrow key, ends up on screen, inside
   // the board's sideways scroll and not under the detail drawer (the sticky panel below the board).

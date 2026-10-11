@@ -74,7 +74,7 @@ button { font: inherit; color: inherit; }
   margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2);
   display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere;
 }
-.lane-title::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+.lane-title::after { content: ""; flex: 1; border-top: 1px solid var(--rule); }   /* a border: it prints and survives forced colours */
 .lane-title:empty { display: none; }
 ol.nodes { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; min-width: 0; }
 ol.nodes > li { min-width: 0; display: grid; }
@@ -102,6 +102,8 @@ ol.nodes > li > .panel { margin-top: 10px; }
    border and the secondary ink, which keeps 4.5:1 on the paper (WCAG 1.4.3). Opacity would not. */
 .board.has-selection .node:not(.on, .near-in, .near-out) { background: var(--paper); border-color: var(--grid); }
 .board.has-selection .node:not(.on, .near-in, .near-out) .t { color: var(--ink-2); }   /* colour only: a lighter weight would rewrap titles and move nodes */
+/* Hovering a node that stepped back still answers (the rule above outweighed .node:hover). */
+.board.has-selection .node:not(.on, .near-in, .near-out):hover { border-color: var(--ink-2); }
 .node.on { border-color: var(--out); box-shadow: 0 0 0 1.5px var(--out); transition: box-shadow .12s; }   /* one transition, not one per node and property */
 .node.near-out { border-color: var(--out); }
 .node.near-in { border-color: var(--in); }
@@ -144,9 +146,9 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .panel ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; list-style: disc; } /* inline, the panel sits in a lane's list */
 .rel { display: grid; gap: 6px; }
 .rel .r-title { margin: 4px 0 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; display: flex; align-items: center; gap: 8px; }
-.rel .r-title::before { content: ""; width: 16px; height: 2px; }
-.rel[data-dir="in"] .r-title { color: var(--in); } .rel[data-dir="in"] .r-title::before { background: var(--in); }
-.rel[data-dir="out"] .r-title { color: var(--out); } .rel[data-dir="out"] .r-title::before { background: var(--out); }
+.rel .r-title::before { content: ""; width: 16px; border-top: 2px solid; }
+.rel[data-dir="in"] .r-title { color: var(--in); }
+.rel[data-dir="out"] .r-title { color: var(--out); }
 .rel ul { list-style: none; padding: 0; }
 .rel button { display: grid; gap: 1px; width: 100%; min-width: 0; text-align: start; background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 7px 10px; cursor: pointer; }
 .rel button:hover { border-color: var(--ink-2); }
@@ -154,6 +156,23 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .rel .rd { font-size: 12px; color: var(--ink-2); line-height: 1.4; overflow-wrap: anywhere; }
 .rel .rw { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; overflow-wrap: anywhere; }
 .status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Forced colours (Windows contrast themes): author colours and shadows are gone, so the selection,
+   its incoming and its outgoing neighbours differ by the shape of a ring inside the node (no size
+   changes: selecting never moves a node), nothing is dimmed, and wires use system colours. */
+@media (forced-colors: active) {
+  .board.has-selection .node:not(.on, .near-in, .near-out) { border-color: GrayText; }
+  .node.on::before, .node.near-in::before, .node.near-out::before { content: ""; position: absolute; inset: 2px; border-radius: 2px; pointer-events: none; }
+  .node.on::before { border: 3px solid Highlight; }
+  .node.near-out::before { border: 2px solid CanvasText; }
+  .node.near-in::before { border: 2px dashed CanvasText; }
+  :focus-visible { outline: 2px solid Highlight; outline-offset: 3px; }
+  .casing { stroke: Canvas; }
+  .wire.out { stroke: CanvasText; } .wire.in { stroke: LinkText; }
+  .arrow.out, .dot.out { fill: CanvasText; } .arrow.in, .dot.in { fill: LinkText; }
+  .dot { stroke: Canvas; }
+  .group-box { border-color: GrayText; }
+}
 
 /* Stacked: lanes one after another, no wires, the detail opens under the node. Every grid of the
    flow layout sets its tracks and positions inline; here they all go back to one column, and the

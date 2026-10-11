@@ -92,10 +92,14 @@ export class Atlas extends EventTarget {
   edges(id) {
     return this._model.edges.filter(e => e.from === id || e.to === id).map(e => M.clone(e));
   }
-  /** Nodes whose title, subtitle or details contain `text` (case-insensitive). */
+  /** Nodes whose title, subtitle (the live one too) or details contain `text`, ignoring case and
+   *  accents, in reading order. Blank text finds nothing. */
   find(text) {
-    const q = String(text).toLocaleLowerCase();
-    return this._model.nodes.filter(n => [n.title, n.subtitle, ...(n.details ?? [])].some(s => typeof s === "string" && s.toLocaleLowerCase().includes(q))).map(n => n.id);
+    const q = fold(text).trim();
+    if (!q) return [];
+    const hit = n => [n.title, n.subtitle, this._live.get(n.id)?.subtitle, ...(Array.isArray(n.details) ? n.details : [])].some(s => typeof s === "string" && fold(s).includes(q));
+    const rank = new Map(this._ordered().map((id, i) => [id, i]));
+    return this._model.nodes.filter(hit).map(n => n.id).sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0));
   }
   /** Nodes that contradict their lane: most of their edges run backwards. Advice, never applied. */
   suggestions() {
@@ -293,6 +297,7 @@ export class Atlas extends EventTarget {
     this._destroyed = true;
     this._ro?.disconnect();
     cancelAnimationFrame(this._frame);
+    clearTimeout(this._saying);
     const running = [...this._animations, ...this._ghostAnims, ...this._cues];
     this._animations = [];          // a transition's end callback sees it is no longer current
     this._ghostAnims = [];
@@ -837,7 +842,9 @@ export class Atlas extends EventTarget {
       b.classList.toggle("on", nid === id);
       b.classList.toggle("near-out", outs.has(nid));
       b.classList.toggle("near-in", ins.has(nid));
-      b.setAttribute("aria-pressed", nid === id ? "true" : "false");
+      // The selection is the current node of the map, not a toggle (aria-pressed read "toggle button,
+      // not pressed" on every node).
+      if (nid === id) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current");
     }
     this._board.classList.toggle("has-selection", id !== null);
   }
@@ -850,9 +857,9 @@ export class Atlas extends EventTarget {
     const laneId = L.laneOf.get(id);
     const lane = [L.before, ...L.flow, L.after].find(l => l && l.id === laneId);
     const kids = [];
-    const p = txt("p", "p-lane", laneId === M.UNASSIGNED ? this.labels.unassigned : (lane?.title ?? ""));
-    const h = txt(this._heading(0), "p-title", n.title ?? n.id);
-    kids.push(p, h);
+    const laneTitle = laneId === M.UNASSIGNED ? this.labels.unassigned : (lane?.title ?? "");
+    if (laneTitle) kids.push(txt("p", "p-lane", laneTitle));   // automatic lanes have no title
+    kids.push(txt(this._heading(0), "p-title", n.title ?? n.id));
     const sub = this._live.get(id)?.subtitle ?? n.subtitle;
     if (sub) kids.push(txt("p", "p-sub", sub));
     if (Array.isArray(n.details) && n.details.length) {
@@ -893,14 +900,27 @@ export class Atlas extends EventTarget {
     this._panel.replaceChildren(...kids);
   }
 
+  /** "Triage: 5 incoming, 2 outgoing" (other nodes, each counted once), and the self-loop if any. */
   _summary(id) {
     const n = this._model.nodes.find(x => x.id === id);
-    const ins = this._model.edges.filter(e => e.to === id && e.from !== id).length;
-    const outs = this._model.edges.filter(e => e.from === id && e.to !== id).length;
-    return `${n?.title ?? id}: ${ins} ${this.labels.incoming.toLowerCase()}, ${outs} ${this.labels.outgoing.toLowerCase()}`;
+    const ins = new Set(this._model.edges.filter(e => e.to === id && e.from !== id).map(e => e.from)).size;
+    const outs = new Set(this._model.edges.filter(e => e.from === id && e.to !== id).map(e => e.to)).size;
+    const self = this._model.edges.some(e => e.from === id && e.to === id);
+    const L = this.labels;
+    const text = L.summary
+      ? fill(L.summary, { title: n?.title ?? id, incoming: ins, outgoing: outs })
+      : `${n?.title ?? id}: ${ins} ${L.incoming.toLowerCase()}, ${outs} ${L.outgoing.toLowerCase()}`;
+    return self ? `${text}. ${L.selfLoop}` : text;
   }
 
+  /** Says `text` in the polite live region; the same text twice is said twice. */
   _announce(text) {
+    clearTimeout(this._saying);
+    if (text && this._status.textContent === text) {
+      this._status.textContent = "";
+      this._saying = setTimeout(() => { if (!this._destroyed) this._status.textContent = text; }, 100);
+      return;
+    }
     this._status.textContent = text;
   }
 
@@ -1116,7 +1136,7 @@ export class Atlas extends EventTarget {
       const { el: b, r: a } = first.nodes.get(id);
       const g = b.cloneNode(true);
       g.removeAttribute("tabindex");
-      g.removeAttribute("aria-pressed");
+      g.removeAttribute("aria-current");
       g.inert = true;
       Object.assign(g.style, { position: "absolute", left: `${a.left - ox}px`, top: `${a.top - oy}px`, width: `${a.width}px`, height: `${a.height}px`, minWidth: "0", minHeight: "0", margin: "0" });
       this._ghosts.append(g);
@@ -1380,6 +1400,16 @@ function reverseTracks(tracks) {
 
 function reducedMotion() {
   return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/** A label template with {name} placeholders filled in. */
+function fill(template, values) {
+  return String(template).replace(/\{(\w+)\}/g, (m, k) => (k in values ? String(values[k]) : m));
+}
+
+/** Text folded for searching: lower case, without accents. */
+function fold(text) {
+  return String(text ?? "").normalize("NFD").replace(/\p{M}/gu, "").toLocaleLowerCase();
 }
 
 function el(tag, className) {

@@ -2006,7 +2006,7 @@ button { font: inherit; color: inherit; }
   margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2);
   display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere;
 }
-.lane-title::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+.lane-title::after { content: ""; flex: 1; border-top: 1px solid var(--rule); }   /* a border: it prints and survives forced colours */
 .lane-title:empty { display: none; }
 ol.nodes { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; min-width: 0; }
 ol.nodes > li { min-width: 0; display: grid; }
@@ -2034,6 +2034,8 @@ ol.nodes > li > .panel { margin-top: 10px; }
    border and the secondary ink, which keeps 4.5:1 on the paper (WCAG 1.4.3). Opacity would not. */
 .board.has-selection .node:not(.on, .near-in, .near-out) { background: var(--paper); border-color: var(--grid); }
 .board.has-selection .node:not(.on, .near-in, .near-out) .t { color: var(--ink-2); }   /* colour only: a lighter weight would rewrap titles and move nodes */
+/* Hovering a node that stepped back still answers (the rule above outweighed .node:hover). */
+.board.has-selection .node:not(.on, .near-in, .near-out):hover { border-color: var(--ink-2); }
 .node.on { border-color: var(--out); box-shadow: 0 0 0 1.5px var(--out); transition: box-shadow .12s; }   /* one transition, not one per node and property */
 .node.near-out { border-color: var(--out); }
 .node.near-in { border-color: var(--in); }
@@ -2076,9 +2078,9 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .panel ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; list-style: disc; } /* inline, the panel sits in a lane's list */
 .rel { display: grid; gap: 6px; }
 .rel .r-title { margin: 4px 0 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; display: flex; align-items: center; gap: 8px; }
-.rel .r-title::before { content: ""; width: 16px; height: 2px; }
-.rel[data-dir="in"] .r-title { color: var(--in); } .rel[data-dir="in"] .r-title::before { background: var(--in); }
-.rel[data-dir="out"] .r-title { color: var(--out); } .rel[data-dir="out"] .r-title::before { background: var(--out); }
+.rel .r-title::before { content: ""; width: 16px; border-top: 2px solid; }
+.rel[data-dir="in"] .r-title { color: var(--in); }
+.rel[data-dir="out"] .r-title { color: var(--out); }
 .rel ul { list-style: none; padding: 0; }
 .rel button { display: grid; gap: 1px; width: 100%; min-width: 0; text-align: start; background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 7px 10px; cursor: pointer; }
 .rel button:hover { border-color: var(--ink-2); }
@@ -2086,6 +2088,23 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .rel .rd { font-size: 12px; color: var(--ink-2); line-height: 1.4; overflow-wrap: anywhere; }
 .rel .rw { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; overflow-wrap: anywhere; }
 .status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* Forced colours (Windows contrast themes): author colours and shadows are gone, so the selection,
+   its incoming and its outgoing neighbours differ by the shape of a ring inside the node (no size
+   changes: selecting never moves a node), nothing is dimmed, and wires use system colours. */
+@media (forced-colors: active) {
+  .board.has-selection .node:not(.on, .near-in, .near-out) { border-color: GrayText; }
+  .node.on::before, .node.near-in::before, .node.near-out::before { content: ""; position: absolute; inset: 2px; border-radius: 2px; pointer-events: none; }
+  .node.on::before { border: 3px solid Highlight; }
+  .node.near-out::before { border: 2px solid CanvasText; }
+  .node.near-in::before { border: 2px dashed CanvasText; }
+  :focus-visible { outline: 2px solid Highlight; outline-offset: 3px; }
+  .casing { stroke: Canvas; }
+  .wire.out { stroke: CanvasText; } .wire.in { stroke: LinkText; }
+  .arrow.out, .dot.out { fill: CanvasText; } .arrow.in, .dot.in { fill: LinkText; }
+  .dot { stroke: Canvas; }
+  .group-box { border-color: GrayText; }
+}
 
 /* Stacked: lanes one after another, no wires, the detail opens under the node. Every grid of the
    flow layout sets its tracks and positions inline; here they all go back to one column, and the
@@ -2299,10 +2318,14 @@ class Atlas extends EventTarget {
   edges(id) {
     return this._model.edges.filter(e => e.from === id || e.to === id).map(e => M.clone(e));
   }
-  /** Nodes whose title, subtitle or details contain `text` (case-insensitive). */
+  /** Nodes whose title, subtitle (the live one too) or details contain `text`, ignoring case and
+   *  accents, in reading order. Blank text finds nothing. */
   find(text) {
-    const q = String(text).toLocaleLowerCase();
-    return this._model.nodes.filter(n => [n.title, n.subtitle, ...(n.details ?? [])].some(s => typeof s === "string" && s.toLocaleLowerCase().includes(q))).map(n => n.id);
+    const q = fold(text).trim();
+    if (!q) return [];
+    const hit = n => [n.title, n.subtitle, this._live.get(n.id)?.subtitle, ...(Array.isArray(n.details) ? n.details : [])].some(s => typeof s === "string" && fold(s).includes(q));
+    const rank = new Map(this._ordered().map((id, i) => [id, i]));
+    return this._model.nodes.filter(hit).map(n => n.id).sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0));
   }
   /** Nodes that contradict their lane: most of their edges run backwards. Advice, never applied. */
   suggestions() {
@@ -2500,6 +2523,7 @@ class Atlas extends EventTarget {
     this._destroyed = true;
     this._ro?.disconnect();
     cancelAnimationFrame(this._frame);
+    clearTimeout(this._saying);
     const running = [...this._animations, ...this._ghostAnims, ...this._cues];
     this._animations = [];          // a transition's end callback sees it is no longer current
     this._ghostAnims = [];
@@ -3044,7 +3068,9 @@ class Atlas extends EventTarget {
       b.classList.toggle("on", nid === id);
       b.classList.toggle("near-out", outs.has(nid));
       b.classList.toggle("near-in", ins.has(nid));
-      b.setAttribute("aria-pressed", nid === id ? "true" : "false");
+      // The selection is the current node of the map, not a toggle (aria-pressed read "toggle button,
+      // not pressed" on every node).
+      if (nid === id) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current");
     }
     this._board.classList.toggle("has-selection", id !== null);
   }
@@ -3057,9 +3083,9 @@ class Atlas extends EventTarget {
     const laneId = L.laneOf.get(id);
     const lane = [L.before, ...L.flow, L.after].find(l => l && l.id === laneId);
     const kids = [];
-    const p = txt("p", "p-lane", laneId === M.UNASSIGNED ? this.labels.unassigned : (lane?.title ?? ""));
-    const h = txt(this._heading(0), "p-title", n.title ?? n.id);
-    kids.push(p, h);
+    const laneTitle = laneId === M.UNASSIGNED ? this.labels.unassigned : (lane?.title ?? "");
+    if (laneTitle) kids.push(txt("p", "p-lane", laneTitle));   // automatic lanes have no title
+    kids.push(txt(this._heading(0), "p-title", n.title ?? n.id));
     const sub = this._live.get(id)?.subtitle ?? n.subtitle;
     if (sub) kids.push(txt("p", "p-sub", sub));
     if (Array.isArray(n.details) && n.details.length) {
@@ -3100,14 +3126,27 @@ class Atlas extends EventTarget {
     this._panel.replaceChildren(...kids);
   }
 
+  /** "Triage: 5 incoming, 2 outgoing" (other nodes, each counted once), and the self-loop if any. */
   _summary(id) {
     const n = this._model.nodes.find(x => x.id === id);
-    const ins = this._model.edges.filter(e => e.to === id && e.from !== id).length;
-    const outs = this._model.edges.filter(e => e.from === id && e.to !== id).length;
-    return `${n?.title ?? id}: ${ins} ${this.labels.incoming.toLowerCase()}, ${outs} ${this.labels.outgoing.toLowerCase()}`;
+    const ins = new Set(this._model.edges.filter(e => e.to === id && e.from !== id).map(e => e.from)).size;
+    const outs = new Set(this._model.edges.filter(e => e.from === id && e.to !== id).map(e => e.to)).size;
+    const self = this._model.edges.some(e => e.from === id && e.to === id);
+    const L = this.labels;
+    const text = L.summary
+      ? fill(L.summary, { title: n?.title ?? id, incoming: ins, outgoing: outs })
+      : `${n?.title ?? id}: ${ins} ${L.incoming.toLowerCase()}, ${outs} ${L.outgoing.toLowerCase()}`;
+    return self ? `${text}. ${L.selfLoop}` : text;
   }
 
+  /** Says `text` in the polite live region; the same text twice is said twice. */
   _announce(text) {
+    clearTimeout(this._saying);
+    if (text && this._status.textContent === text) {
+      this._status.textContent = "";
+      this._saying = setTimeout(() => { if (!this._destroyed) this._status.textContent = text; }, 100);
+      return;
+    }
     this._status.textContent = text;
   }
 
@@ -3323,7 +3362,7 @@ class Atlas extends EventTarget {
       const { el: b, r: a } = first.nodes.get(id);
       const g = b.cloneNode(true);
       g.removeAttribute("tabindex");
-      g.removeAttribute("aria-pressed");
+      g.removeAttribute("aria-current");
       g.inert = true;
       Object.assign(g.style, { position: "absolute", left: `${a.left - ox}px`, top: `${a.top - oy}px`, width: `${a.width}px`, height: `${a.height}px`, minWidth: "0", minHeight: "0", margin: "0" });
       this._ghosts.append(g);
@@ -3587,6 +3626,16 @@ function reverseTracks(tracks) {
 
 function reducedMotion() {
   return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+/** A label template with {name} placeholders filled in. */
+function fill(template, values) {
+  return String(template).replace(/\{(\w+)\}/g, (m, k) => (k in values ? String(values[k]) : m));
+}
+
+/** Text folded for searching: lower case, without accents. */
+function fold(text) {
+  return String(text ?? "").normalize("NFD").replace(/\p{M}/gu, "").toLocaleLowerCase();
 }
 
 function el(tag, className) {
