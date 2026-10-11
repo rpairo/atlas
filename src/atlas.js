@@ -77,7 +77,8 @@ export class Atlas extends EventTarget {
   export() { return this.toJSON(); }
   get rev() { return this._rev; }
   get selected() { return this._selected; }
-  get warnings() { return this._warnings ?? []; }
+  /** Warnings of the board (validate) and of its placement (a group split by constraints). */
+  get warnings() { return [...(this._warnings ?? []), ...(this._layout?.warnings ?? [])]; }
   node(id) { const n = this._model.nodes.find(x => x.id === id); return n ? M.clone(n) : null; }
   edges(id) {
     return this._model.edges.filter(e => e.from === id || e.to === id).map(e => M.clone(e));
@@ -124,7 +125,7 @@ export class Atlas extends EventTarget {
     this._render({ animate: false });
     const first = selected === undefined ? (m.meta.selected ?? null) : selected;
     this.select(first && m.nodes.some(n => n.id === first) ? first : null, { focus: false, animate: this.options.animate });
-    this._emit("change", { rev: this._rev, diff: null, warnings });
+    this._emit("change", { rev: this._rev, diff: null, warnings: this.warnings });
     return this;
   }
 
@@ -212,7 +213,13 @@ export class Atlas extends EventTarget {
    */
   reorderAll({ dryRun = false } = {}) {
     const now = this._layout ?? computeLayout(this._model);
-    const m = withOrder(this._model, computeLayout(this._model, { optimize: true }), true);
+    let m = withOrder(this._model, computeLayout(this._model, { optimize: true }), true);
+    // Groups and constraints apply again when the result is drawn. A lane where that would move a
+    // pinned node keeps its current order: pinned nodes never move.
+    const drawn = computeLayout(m);
+    const pinned = new Set(this._model.nodes.filter(n => n.pinned).map(n => n.id));
+    const kept = [...now.order].filter(([lane, ids]) => ids.some((id, i) => pinned.has(id) && drawn.order.get(lane)?.[i] !== id)).map(([lane]) => lane);
+    if (kept.length) m = withOrder(this._model, { ...drawn, order: new Map([...drawn.order].map(([lane, ids]) => [lane, kept.includes(lane) ? now.order.get(lane) : ids])) });
     // Counted on the order that results, after pinned nodes went back to their places.
     const swaps = inversions(now, computeLayout(m));
     if (dryRun || swaps === 0) return { swaps };
@@ -297,7 +304,7 @@ export class Atlas extends EventTarget {
     this._rev++;
     const d = M.diff(before, after);
     this._render({ animate: true, diff: d, long });
-    this._emit("change", { rev: this._rev, diff: d, warnings: this._warnings });
+    this._emit("change", { rev: this._rev, diff: d, warnings: this.warnings });
   }
 
   _swap(model) {
@@ -307,7 +314,7 @@ export class Atlas extends EventTarget {
     this._rev++;
     const d = M.diff(before, model);
     this._render({ animate: true, diff: d });
-    this._emit("change", { rev: this._rev, diff: d, warnings: this._warnings });
+    this._emit("change", { rev: this._rev, diff: d, warnings: this.warnings });
   }
 
   _emit(type, detail) {
@@ -982,7 +989,8 @@ class Batch {
     // Positions are relative to the node's lane, which may be automatic: anchor on a neighbour.
     const L = computeLayout(this.model);
     const peers = L.order.get(L.laneOf.get(node.id)).filter(id => id !== node.id);
-    if (index === undefined) index = bestInsertion(this.model, node.id);
+    // The best gap, or the allowed gap nearest the given index: never one that moves existing nodes.
+    index = bestInsertion(this.model, node.id, index);
     if (!peers.length) return this;
     return this.apply(index < peers.length
       ? { op: "moveNode", id: node.id, before: peers[index] }

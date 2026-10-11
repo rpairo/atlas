@@ -281,6 +281,21 @@ try {
   await new Promise(r => setTimeout(r, 1500));
   if (rejections.length) res.behaviour.push(`destroy() during a transition: ${rejections[0]}`);
   host2.remove();
+  // reorderAll() never moves a pinned node, also when groups are enforced again after it.
+  try {
+    const host3 = document.createElement("div");
+    document.body.append(host3);
+    const pb = await (await fetch("../fixtures/pinned-groups.json")).text();
+    const m3 = new Atlas(host3, { document: pb, animate: false });
+    const lanesBefore = new Map([...m3._layout.order].map(([l, ids]) => [l, [...ids]]));
+    m3.reorderAll();
+    const pins = JSON.parse(pb).nodes.filter(n => n.pinned).map(n => n.id);
+    for (const [l, ids] of lanesBefore) for (const p of pins) {
+      if (ids.includes(p) && m3._layout.order.get(l).indexOf(p) !== ids.indexOf(p)) res.behaviour.push(`reorderAll moved pinned ${p} in lane ${l}`);
+    }
+    m3.destroy();
+    host3.remove();
+  } catch (e) { res.behaviour.push(`pinned check threw ${e.name}: ${e.message}`); }
   // <atlas-map>: an inline board's events come after the code that inserted it could listen, the
   // latest src wins over a slower earlier one, ready and error tell the outcome, and a destroyed
   // element comes back when it is inserted again.

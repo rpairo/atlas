@@ -125,3 +125,42 @@ test("a new node enters the gap with fewest crossings, the rest keeps its order"
   assert.deepEqual(order.filter(id => id !== "n"), ["x", "y", "z"], "existing nodes never swap");
   assert.ok(order.indexOf("n") >= 2, "next to its neighbour");
 });
+
+test("a new node never lands where its group would move existing nodes", () => {
+  // Lane L shows a (G1), b (G2). x joins G2: before a, the G2 block would jump ahead and swap a, b.
+  const { model } = load({
+    lanes: [{ id: "L" }, { id: "M" }], groups: [{ id: "G1" }, { id: "G2" }],
+    nodes: [{ id: "a", lane: "L", group: "G1" }, { id: "b", lane: "L", group: "G2" }, { id: "m1", lane: "M" }, { id: "m2", lane: "M" }],
+    edges: [{ from: "a", to: "m2" }, { from: "b", to: "m1" }],
+  });
+  const before = layout(model);
+  for (const near of [undefined, 0]) {
+    let m = apply(model, [{ op: "addNode", node: { id: "x", lane: "L", group: "G2" } }, { op: "addEdge", edge: { from: "x", to: "m1" } }]).model;
+    const peers = layout(m).order.get("L").filter(id => id !== "x");
+    const i = bestInsertion(m, "x", near);
+    m = apply(m, i < peers.length ? { op: "moveNode", id: "x", before: peers[i] } : { op: "moveNode", id: "x", after: peers[peers.length - 1] }).model;
+    assert.equal(inversions(before, layout(m)), 0, `near=${near}: ${layout(m).order.get("L").join(",")}`);
+  }
+});
+
+test("constraints that split a group are reported, not applied silently", () => {
+  const { model } = load({
+    lanes: [{ id: "L" }], groups: [{ id: "G" }],
+    nodes: [{ id: "a", lane: "L", group: "G" }, { id: "b", lane: "L" }, { id: "c", lane: "L", group: "G" }],
+    constraints: [{ type: "before", a: "a", b: "b" }, { type: "before", a: "b", b: "c" }],
+  });
+  assert.ok(layout(model).warnings.some(w => w.code === "group-split"));
+  assert.deepEqual(layout(load({ nodes: [{ id: "a" }] }).model).warnings, []);
+});
+
+test("tidying a dense two-lane board takes milliseconds, not seconds", () => {
+  let s = 3; const r = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+  const nodes = [...Array.from({ length: 150 }, (_, i) => ({ id: "a" + i, lane: "A" })), ...Array.from({ length: 150 }, (_, i) => ({ id: "b" + i, lane: "B" }))];
+  const edges = [], seen = new Set();
+  while (edges.length < 1000) { const a = Math.floor(r() * 150), b = Math.floor(r() * 150); if (seen.has(a + ":" + b)) continue; seen.add(a + ":" + b); edges.push({ from: "a" + a, to: "b" + b }); }
+  const { model } = load({ lanes: [{ id: "A" }, { id: "B" }], nodes, edges });
+  const t0 = performance.now();
+  layout(model, { optimize: true });
+  const ms = performance.now() - t0;
+  assert.ok(ms < 3000, `layout(optimize) took ${Math.round(ms)} ms`);
+});

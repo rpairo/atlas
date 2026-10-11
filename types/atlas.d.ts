@@ -308,6 +308,8 @@ export interface Layout {
   /** Edge id → its class. */
   edgeClass: Map<string, "forward" | "same" | "backward" | "self">;
   groups: GroupSpan[];
+  /** Placement warnings, such as `group-split` (constraints put other nodes inside a group). */
+  warnings: Finding[];
 }
 
 /** @experimental Places a canonical model. `optimize` reorders every lane for fewest crossings. */
@@ -315,9 +317,10 @@ export declare function layout(model: Model, options?: { optimize?: boolean }): 
 
 /**
  * @experimental Where a node already in `model` should go: its index among the other nodes of
- * its lane, at the gap with the fewest crossings.
+ * its lane (in drawing order), at the gap with the fewest crossings, or with `near` the allowed gap
+ * nearest that index. Gaps that would move a group block, and existing nodes with it, are skipped.
  */
-export declare function bestInsertion(model: Model, nodeId: string): number;
+export declare function bestInsertion(model: Model, nodeId: string, near?: number): number;
 
 /** @experimental How many pairs of nodes swap places between two layouts. */
 export declare function inversions(before: Pick<Layout, "order">, after: Pick<Layout, "order">): number;

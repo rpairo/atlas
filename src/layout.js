@@ -39,6 +39,7 @@ export function layout(model, options = {}) {
 
   const slots = balance(lanes, order, adjacency);
   const edgeClass = classifyEdges(model, lanes.laneOfNode, rank);
+  const warnings = splitGroups(model, order);
 
   return {
     direction: model.meta.direction,
@@ -53,16 +54,32 @@ export function layout(model, options = {}) {
     rows: slots.rows,
     edgeClass,
     groups: groupSpans(model, order, slots.slot, nodes),
+    warnings,
   };
+}
+
+/** Groups whose members, in some lane, have other nodes between them (constraints put them there). */
+function splitGroups(model, order) {
+  const out = [];
+  for (const g of model.groups) for (const [lane, ids] of order) {
+    const at = [];
+    ids.forEach((id, i) => { if (inGroup(model.nodes.find(n => n.id === id), g.id, model)) at.push(i); });
+    if (at.length > 1 && at[at.length - 1] - at[0] + 1 !== at.length) {
+      out.push({ path: "groups", code: "group-split", message: `constraints put other nodes between the members of group "${g.id}" in lane "${lane}"` });
+    }
+  }
+  return out;
 }
 
 /**
  * Where a new node of `lane` should go: the gap with the fewest crossings against its neighbours,
  * respecting constraints; ties go to the gap nearest the median of its neighbours, then the end.
- * `model` must already contain the node and its edges; the returned index is its position among
- * the other nodes of the lane.
+ * With `near`, the allowed gap nearest that index instead. A gap is allowed when the lane keeps its
+ * constraints and its groups as they are drawn: a gap that would move a group block, and with it
+ * existing nodes, is never offered. `model` must already contain the node and its edges; the
+ * returned index is its position among the other nodes of the lane, in the order they are drawn.
  */
-export function bestInsertion(model, nodeId) {
+export function bestInsertion(model, nodeId, near) {
   const lanes = resolveLanes(model);
   const laneId = lanes.laneOfNode.get(nodeId);
   const adjacency = buildAdjacency(model, lanes.laneOfNode);
@@ -70,6 +87,7 @@ export function bestInsertion(model, nodeId) {
   const order = new Map();
   for (const l of lanes.all) order.set(l.id, []);
   for (const n of model.nodes) if (n.id !== nodeId) order.get(lanes.laneOfNode.get(n.id)).push(n.id);
+  for (const l of lanes.all) order.set(l.id, enforce(order.get(l.id), constraints.get(l.id), model));
   const others = order.get(laneId);
   const pos = positionsOf(order);
   const neighbours = [...(adjacency.get(nodeId) ?? [])].filter(w => lanes.laneOfNode.get(w) !== laneId && pos.has(w));
@@ -78,7 +96,12 @@ export function bestInsertion(model, nodeId) {
   let best = null;
   for (let i = 0; i <= others.length; i++) {
     const candidate = [...others.slice(0, i), nodeId, ...others.slice(i)];
-    if (!satisfies(candidate, constraints.get(laneId))) continue;
+    if (!satisfies(candidate, constraints.get(laneId)) || groupBlocks(candidate, model).join() !== candidate.join()) continue;
+    if (near !== undefined) {
+      const score = [Math.abs(i - near), i];
+      if (!best || lexLess(score, best.score)) best = { index: i, score };
+      continue;
+    }
     order.set(laneId, candidate);
     const p = positionsOf(order);
     const crossings = laneCrossings(laneId, lanes, order, adjacency, p) + sameLanePenalty(candidate, model);
@@ -331,24 +354,82 @@ function sortByMedian(lane, ref, order, adjacency, constraints, model) {
   order.set(lane, enforce(sorted, constraints.get(lane), model));
 }
 
+/**
+ * Swaps neighbours in each flow lane while that lowers the crossings. Swapping two adjacent nodes
+ * u and v only changes the crossings between u's wires and v's wires (to the lanes on either side)
+ * and the direction of the edges between u and v, so the change is counted from those alone instead
+ * of recounting the lane: the same decisions as recounting, in O(deg u × deg v) per swap.
+ */
 function transpose(lanes, order, adjacency, constraints, model) {
-  for (const l of lanes.flow) {
+  const flow = lanes.flow.map(l => l.id);
+  const chainKey = groupChains(model);
+  const directed = new Map();   // "u\0v" → number of edges from u to v (each runs upwards: 0.5)
+  for (const e of model.edges) {
+    if (e.from === e.to) continue;
+    const k = e.from + "\0" + e.to;
+    directed.set(k, (directed.get(k) ?? 0) + 1);
+  }
+  flow.forEach((lane, k) => {
+    const c = constraints.get(lane);
+    const sides = [flow[k - 1], flow[k + 1]].filter(x => x !== undefined).map(x => new Map(order.get(x).map((id, i) => [id, i])));
+    // Neighbours of each node in each side lane, by position (side lanes do not move in this pass).
+    const near = id => sides.map(pos => [...adjacency.get(id)].filter(w => pos.has(w)).map(w => pos.get(w)));
+    const nearOf = new Map(order.get(lane).map(id => [id, near(id)]));
     let improved = true, guard = 0;
     while (improved && guard++ < 4) {
       improved = false;
-      const ids = order.get(l.id);
+      const ids = order.get(lane);
+      // A lane whose constraints already split a group (or break a constraint) is left as it is:
+      // no swap can make it whole, and any swap would be judged against a broken order.
+      if (!satisfies(ids, c) || groupBlocks(ids, model).join() !== ids.join()) break;
       for (let i = 0; i < ids.length - 1; i++) {
-        const before = laneCrossings(l.id, lanes, order, adjacency, positionsOf(order)) + sameLanePenalty(ids, model);
-        const swapped = [...ids];
-        [swapped[i], swapped[i + 1]] = [swapped[i + 1], swapped[i]];
-        if (!satisfies(swapped, constraints.get(l.id)) || groupBlocks(swapped, model).join() !== swapped.join()) continue;
-        order.set(l.id, swapped);
-        const after = laneCrossings(l.id, lanes, order, adjacency, positionsOf(order)) + sameLanePenalty(swapped, model);
-        if (after < before) { ids.splice(0, ids.length, ...swapped); improved = true; }
-        order.set(l.id, ids);
+        const u = ids[i], v = ids[i + 1];
+        if (!canSwap(ids, i, c) || (chainKey(u) !== chainKey(v) && !staysGrouped(ids, i, model))) continue;
+        let delta = 0;
+        const nu = nearOf.get(u), nv = nearOf.get(v);
+        for (let s = 0; s < sides.length; s++) for (const x of nu[s]) for (const y of nv[s]) {
+          if (x > y) delta--;        // u above v: these two wires cross; after the swap they do not
+          else if (x < y) delta++;   // and these do not cross now, but will
+        }
+        delta += 0.5 * ((directed.get(u + "\0" + v) ?? 0) - (directed.get(v + "\0" + u) ?? 0));
+        if (delta < 0) { ids[i] = v; ids[i + 1] = u; improved = true; }
       }
     }
-  }
+  });
+}
+
+/** Whether swapping ids[i] and ids[i + 1] keeps the lane's constraints (they hold before it). */
+function canSwap(ids, i, c) {
+  if (!c) return true;
+  const u = ids[i], v = ids[i + 1];
+  if (c.before.some(([a, b]) => a === u && b === v)) return false;
+  if (c.first === u && i === 0) return false;
+  if (c.last === v && i + 1 === ids.length - 1) return false;
+  return true;
+}
+
+/** Whether the lane stays one block per group after swapping ids[i] and ids[i + 1]. */
+function staysGrouped(ids, i, model) {
+  const swapped = [...ids];
+  [swapped[i], swapped[i + 1]] = [swapped[i + 1], swapped[i]];
+  return groupBlocks(swapped, model).join() === swapped.join();
+}
+
+/** A function giving each node's chain of groups as a key; nodes with the same key can swap freely. */
+function groupChains(model) {
+  const groups = new Map(model.groups.map(g => [g.id, g]));
+  const nodes = new Map(model.nodes.map(n => [n.id, n]));
+  const memo = new Map();
+  return id => {
+    if (memo.has(id)) return memo.get(id);
+    const out = [];
+    let g = nodes.get(id)?.group;
+    const guard = new Set();
+    while (g != null && groups.has(g) && !guard.has(g)) { guard.add(g); out.push(g); g = groups.get(g).parent; }
+    const key = out.join("\0");
+    memo.set(id, key);
+    return key;
+  };
 }
 
 function orderBand(bandId, lanes, order, adjacency, constraints, model) {

@@ -63,7 +63,7 @@ step, animates the change and fires `change`. Editing methods return the new rev
 | Method | |
 |---|---|
 | `load(board, { optimize, selected })` | Replaces the board and clears the history. A board without `meta.ordered: true` is tidied once (fewest crossings); `optimize: true` forces that, `false` prevents it. Returns the map. |
-| `addNode(node, { index, edges })` | Adds a node with its optional `edges`. Without `index` it enters the gap of its lane with the fewest crossings; with `index` it becomes the `index`-th node of its lane. |
+| `addNode(node, { index, edges })` | Adds a node with its optional `edges`. Without `index` it enters the gap of its lane with the fewest crossings; with `index` it becomes the `index`-th node of its lane, or goes to the nearest gap that keeps the lane's groups and constraints as they are. Existing nodes never change places. |
 | `updateNode(id, changes)` | Merges `changes` into the node. A field set to `null` is removed. The id cannot change here. |
 | `moveNode(id, { lane, index })` | Moves a node to another lane (`lane: null` removes its lane) and/or position. |
 | `removeNode(id)` | Removes a node with its edges and constraints. |

@@ -223,6 +223,7 @@ is meant for people. Errors make a board unusable; warnings are drawn anyway and
 | `self` | warning | An edge connects a node to itself. |
 | `parallel` | warning | Two edges have the same `from` and `to`. |
 | `unknown-type` | warning | An edge type is not in a non-empty `edgeTypes`. |
+| `group-split` | warning | Constraints put other nodes between the members of a group in a lane (reported by the placement, in `map.warnings`). |
 | `cross-lane` | warning | A `before` constraint relates nodes of different lanes. |
 
 ## Ids
