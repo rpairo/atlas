@@ -228,16 +228,18 @@ try {
       const r = ratio(getComputedStyle(t).color, cs.backgroundColor);
       if (cs.opacity !== "1" || r < 4.5) res.behaviour.push(`a dimmed node's title has ${r.toFixed(2)}:1 at opacity ${cs.opacity}`);
     }
-    const laneOf = map._layout.laneOf.get(live[0]);
+    // A declared lane (automatic lanes and "unassigned" cannot be named in a node).
+    const declared = new Set(map.toJSON().lanes?.map(l => l.id) ?? []);
+    const laneOf = declared.has(map._layout.laneOf.get(live[0])) ? map._layout.laneOf.get(live[0]) : undefined;
     const long = "W".repeat(300);
-    map.addNode({ id: "audit_long", title: long, subtitle: long, details: [long], lane: laneOf === "(unassigned)" ? undefined : laneOf });
+    map.addNode({ id: "audit_long", title: long, subtitle: long, details: [long], lane: laneOf });
     map.select("audit_long", { focus: false, animate: false });
     const panel = map.root.querySelector(".panel"), nb = map._els.get("audit_long");
     if (panel.scrollWidth > panel.clientWidth + 1) res.behaviour.push(`a long title overflows the detail (${panel.scrollWidth} > ${panel.clientWidth})`);
     if (nb.scrollWidth > nb.clientWidth + 1) res.behaviour.push("a long title overflows its node");
     if (panel.parentElement?.tagName === "OL") res.behaviour.push("the detail is a child of the lane's <ol>");
     map.undo();
-    if (laneOf && laneOf !== "(unassigned)") {
+    if (laneOf) {
       map.updateLane(laneOf, { title: long });
       const lt = map.root.querySelector(`[data-lane="${CSS.escape(laneOf)}"] .lane-title`);
       if (lt && lt.scrollWidth > lt.clientWidth + 1) res.behaviour.push(`a long lane title overflows (${lt.scrollWidth} > ${lt.clientWidth})`);
