@@ -184,21 +184,23 @@ try {
   // Visibility: a node selected with focus, or reached with an arrow key, ends up on screen, inside
   // the board's sideways scroll and not under the detail drawer (the sticky panel below the board).
   res.hidden = [];
+  let where = "";
   const seen = id => {
     const r = map._els.get(id).getBoundingClientRect(), box = map._boardWrap.getBoundingClientRect();
     const panel = map.root.querySelector(".panel");
     const foot = wrap.dataset.panel === "below" && !panel.hidden ? Math.min(innerHeight, panel.getBoundingClientRect().top) : innerHeight;
+    where = `node ${r.left | 0}-${r.right | 0} x ${r.top | 0}-${r.bottom | 0}, foot ${foot | 0}, box ${box.left | 0}-${box.right | 0}, window ${innerWidth}x${innerHeight}, scrollY ${scrollY | 0} of ${document.documentElement.scrollHeight - innerHeight}`;
     return r.top >= -1 && r.bottom <= foot + 1 && r.left >= Math.max(0, box.left) - 1 && r.right <= Math.min(innerWidth, box.right) + 1;
   };
   for (const id of live) {
     scrollTo(0, 0); map._boardWrap.scrollLeft = 0;
     map.select(id, { animate: false });
-    if (!seen(id)) res.hidden.push(`select ${id}`);
+    if (!seen(id)) res.hidden.push(`select ${id} (${where})`);
     for (const key of Object.keys(arrows)) {
       map.select(id, { animate: false });
       map._els.get(id).dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, composed: true }));
       const to = map._idOf.get(map.root.activeElement);
-      if (to !== undefined && to !== id && !seen(to)) res.hidden.push(`${key} from ${id} to ${to}`);
+      if (to !== undefined && to !== id && !seen(to)) res.hidden.push(`${key} from ${id} to ${to} (${where})`);
     }
   }
   map.select(null, { focus: false });
