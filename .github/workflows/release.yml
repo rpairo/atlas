@@ -39,11 +39,15 @@ jobs:
 
       - name: Release notes with integrity hashes
         run: |
+          # The section of this version: up to the next heading of any version, without the
+          # link references that close the file.
           awk -v v="$VERSION" '
             $0 ~ "^## \\[" v "\\]" { on = 1; next }
-            on && /^## \[/ { exit }
+            on && /^## / { exit }
+            on && /^\[[^]]+\]: / { next }
             on { print }
           ' CHANGELOG.md > notes.md
+          grep -q . notes.md || { echo "the CHANGELOG section for $VERSION is empty"; exit 1; }
           {
             echo
             echo "### Files"
