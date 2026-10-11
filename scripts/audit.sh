@@ -3,7 +3,8 @@
 # Usage: scripts/audit.sh [board path relative to test/browser/] [width...]
 # Environment: CHROME (path of the browser; macOS default below), CHROME_FLAGS (extra flags, e.g.
 # --no-sandbox in CI containers), EXTRA (query string added to the audit page, e.g. "&direction=up",
-# "&hostvars=1", "&dist=1"), REAL=1 (real time instead of virtual time).
+# "&hostvars=1", "&dist=1"), REAL=1 (real time instead of virtual time), HEIGHT (window height,
+# 2400 by default; a short one puts the detail drawer over the board).
 # Chrome writes the page and then does not exit on its own (seen on macOS 27), so the script waits
 # for the dump and kills it.
 set -u
@@ -22,7 +23,7 @@ STATUS=0
 for W in $WIDTHS; do
   PROFILE="$PWD/test/browser/profile-$W"; rm -rf "$PROFILE"
   DUMP="$OUT/dom-$W.html"; : > "$DUMP"
-  "$CH" --headless=new --disable-gpu --hide-scrollbars ${CHROME_FLAGS:-} --user-data-dir="$PROFILE" --window-size="$W,2400" \
+  "$CH" --headless=new --disable-gpu --hide-scrollbars ${CHROME_FLAGS:-} --user-data-dir="$PROFILE" --window-size="$W,${HEIGHT:-2400}" \
     ${REAL:+--timeout=60000} ${REAL:---virtual-time-budget=30000} --dump-dom "http://127.0.0.1:$PORT/test/browser/audit.html?board=$BOARD$EXTRA" > "$DUMP" 2>/dev/null &
   for i in $(seq 1 120); do grep -q "</html>" "$DUMP" && break; sleep 1; done
   pkill -9 -f "$PROFILE" 2>/dev/null; rm -rf "$PROFILE"
@@ -33,7 +34,7 @@ m = re.search(r'<pre id="audit">(.*?)</pre>', open(path).read(), re.S)
 if not m: print(w, "NO RESULT"); sys.exit(1)
 r = json.loads(html.unescape(m.group(1)))
 if "error" in r: print(w, "ERROR", r["error"][:800]); sys.exit(1)
-bad = {k: r.get(k) for k in ["missing", "underNode", "crossings", "close", "shortTip", "outside", "moved", "unpainted", "covered", "stack", "behaviour", "loops"] if r.get(k)}
+bad = {k: r.get(k) for k in ["missing", "underNode", "crossings", "close", "shortTip", "outside", "moved", "unpainted", "covered", "stack", "behaviour", "hidden", "loops"] if r.get(k)}
 print(f"{w}px  mode={r['mode']}  nodes={r['nodes']}  wires={r['wires']}  slowest={r.get('slowest')}  edits={r['edits']}")
 for k, v in bad.items(): print(f"   {k}: {len(v)}  {v[:6]}")
 sys.exit(1 if bad or any(("DIFFERENT" in e or "MOVED" in e or "missing" in e) for e in r["edits"]) else 0)

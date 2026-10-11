@@ -135,7 +135,7 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .panel .p-lane { margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2); }
 .panel h3 { margin: 0; font-size: 1.4rem; line-height: 1.2; text-wrap: balance; }
 .panel .p-sub { margin: 0; font: 12.5px/1.4 var(--mono); color: var(--ink-2); }
-.panel ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+.panel ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; list-style: disc; } /* inline, the panel sits in a lane's list */
 .rel { display: grid; gap: 6px; }
 .rel h4 { margin: 4px 0 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; display: flex; align-items: center; gap: 8px; }
 .rel h4::before { content: ""; width: 16px; height: 2px; }

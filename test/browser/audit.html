@@ -179,6 +179,35 @@ try {
     const [ax, ay] = centre(id), [bx, by] = centre(to);
     if ((bx - ax) * dx + (by - ay) * dy <= 0) res.behaviour.push(`${key} from ${id} went to ${to}, which is not that way`);
   }
+  // Visibility: a node selected with focus, or reached with an arrow key, ends up on screen, inside
+  // the board's sideways scroll and not under the detail drawer (the sticky panel below the board).
+  res.hidden = [];
+  const seen = id => {
+    const r = map._els.get(id).getBoundingClientRect(), box = map._boardWrap.getBoundingClientRect();
+    const panel = map.root.querySelector(".panel");
+    const foot = wrap.dataset.panel === "below" && !panel.hidden ? Math.min(innerHeight, panel.getBoundingClientRect().top) : innerHeight;
+    return r.top >= -1 && r.bottom <= foot + 1 && r.left >= Math.max(0, box.left) - 1 && r.right <= Math.min(innerWidth, box.right) + 1;
+  };
+  for (const id of live) {
+    scrollTo(0, 0); map._boardWrap.scrollLeft = 0;
+    map.select(id, { animate: false });
+    if (!seen(id)) res.hidden.push(`select ${id}`);
+    for (const key of Object.keys(arrows)) {
+      map.select(id, { animate: false });
+      map._els.get(id).dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, composed: true }));
+      const to = map._idOf.get(map.root.activeElement);
+      if (to !== undefined && to !== id && !seen(to)) res.hidden.push(`${key} from ${id} to ${to}`);
+    }
+  }
+  map.select(null, { focus: false });
+  // The detail's own bullets are discs wherever the panel sits (inline it is inside the lane's list).
+  const withList = map.toJSON().nodes.find(n => Array.isArray(n.details) && n.details.length)?.id;
+  if (withList) {
+    map.select(withList, { focus: false, animate: false });
+    const ul = map.root.querySelector(".panel > ul");
+    if (ul && getComputedStyle(ul).listStyleType !== "disc") res.behaviour.push(`detail bullets are ${getComputedStyle(ul).listStyleType}`);
+    map.select(null, { focus: false });
+  }
   const dry = map.reorderAll({ dryRun: true }).swaps, revBefore = map.rev;
   const done = map.reorderAll().swaps;
   if (dry !== done) res.behaviour.push(`reorderAll counted ${dry} in a dry run and ${done} for real`);
