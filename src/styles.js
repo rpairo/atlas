@@ -64,17 +64,20 @@ button { font: inherit; color: inherit; }
   width: auto;
   min-width: min-content;
 }
-.board-wrap { min-width: 0; overflow-x: auto; isolation: isolate; }
+/* The board is geometry: lanes, corridors and wires are measured left to right, so it stays left to
+   right on a right-to-left page (each text follows its own direction, see txt() in atlas.js). */
+.board-wrap { min-width: 0; overflow-x: auto; isolation: isolate; direction: ltr; }
 
 /* Bands and lanes */
 .lane-title {
   margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2);
-  display: flex; align-items: center; gap: 8px; min-width: 0;
+  display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere;
 }
 .lane-title::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
 .lane-title:empty { display: none; }
 ol.nodes { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; min-width: 0; }
 ol.nodes > li { min-width: 0; display: grid; }
+ol.nodes > li > .panel { margin-top: 10px; }
 .band { display: grid; gap: 10px; min-width: 0; position: relative; z-index: 1; }
 .band.after .lane-title { order: 2; }
 .flow { display: grid; min-width: 0; position: relative; z-index: 1; }
@@ -84,13 +87,13 @@ ol.nodes > li { min-width: 0; display: grid; }
   margin: -6px; pointer-events: none; z-index: 0;
 }
 .group-box > span {
-  position: absolute; top: -9px; left: 10px; padding: 0 6px; background: var(--paper);
-  font: 500 11px/1.4 var(--mono); color: var(--ink-2);
+  position: absolute; top: -9px; left: 10px; max-width: calc(100% - 20px); padding: 0 6px; background: var(--paper);
+  font: 500 11px/1.4 var(--mono); color: var(--ink-2); overflow-wrap: anywhere;
 }
 
 /* Nodes */
 .node {
-  position: relative; display: block; width: 100%; min-width: 0; text-align: left;
+  position: relative; display: block; width: 100%; min-width: 0; text-align: start;
   background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px;
   padding: 9px 12px 10px; cursor: pointer;
   transition: opacity .2s, border-color .2s, box-shadow .2s;
@@ -98,8 +101,10 @@ ol.nodes > li { min-width: 0; display: grid; }
 .node .t { display: block; font-weight: 600; font-size: 14px; line-height: 1.3; overflow-wrap: anywhere; }
 .node .s { display: block; font: 11.5px/1.35 var(--mono); color: var(--ink-2); margin-top: 2px; overflow-wrap: anywhere; }
 .node:hover { border-color: var(--ink-2); }
-.board.has-selection .node { opacity: .34; }
-.board.has-selection .node.on, .board.has-selection .node.near-in, .board.has-selection .node.near-out { opacity: 1; }
+/* Nodes outside the selection step back without losing their text: paper instead of sheet, a faint
+   border and the secondary ink, which keeps 4.5:1 on the paper (WCAG 1.4.3). Opacity would not. */
+.board.has-selection .node:not(.on, .near-in, .near-out) { background: var(--paper); border-color: var(--grid); }
+.board.has-selection .node:not(.on, .near-in, .near-out) .t { color: var(--ink-2); font-weight: 500; }
 .node.on { border-color: var(--out); box-shadow: 0 0 0 1.5px var(--out); }
 .node.near-out { border-color: var(--out); }
 .node.near-in { border-color: var(--in); }
@@ -133,8 +138,9 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .atlas[data-panel="side"] .panel { position: sticky; top: 16px; }
 .atlas[data-panel="below"] .panel { position: sticky; bottom: 12px; max-height: 42vh; overflow: auto; box-shadow: 0 12px 32px -8px var(--shadow); }
 .panel .p-lane { margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2); }
-.panel h3 { margin: 0; font-size: 1.4rem; line-height: 1.2; text-wrap: balance; }
-.panel .p-sub { margin: 0; font: 12.5px/1.4 var(--mono); color: var(--ink-2); }
+.panel h3 { margin: 0; font-size: 1.4rem; line-height: 1.2; text-wrap: balance; overflow-wrap: anywhere; }
+.panel .p-sub { margin: 0; font: 12.5px/1.4 var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
+.panel li { overflow-wrap: anywhere; }
 .panel ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; list-style: disc; } /* inline, the panel sits in a lane's list */
 .rel { display: grid; gap: 6px; }
 .rel h4 { margin: 4px 0 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; display: flex; align-items: center; gap: 8px; }
@@ -142,7 +148,7 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .rel[data-dir="in"] h4 { color: var(--in); } .rel[data-dir="in"] h4::before { background: var(--in); }
 .rel[data-dir="out"] h4 { color: var(--out); } .rel[data-dir="out"] h4::before { background: var(--out); }
 .rel ul { list-style: none; padding: 0; }
-.rel button { display: grid; gap: 1px; width: 100%; text-align: left; background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 7px 10px; cursor: pointer; }
+.rel button { display: grid; gap: 1px; width: 100%; min-width: 0; text-align: start; background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 7px 10px; cursor: pointer; }
 .rel button:hover { border-color: var(--ink-2); }
 .rel .rt { font-weight: 600; font-size: 13.5px; }
 .rel .rw { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; }

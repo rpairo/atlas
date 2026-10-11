@@ -1619,17 +1619,20 @@ button { font: inherit; color: inherit; }
   width: auto;
   min-width: min-content;
 }
-.board-wrap { min-width: 0; overflow-x: auto; isolation: isolate; }
+/* The board is geometry: lanes, corridors and wires are measured left to right, so it stays left to
+   right on a right-to-left page (each text follows its own direction, see txt() in atlas.js). */
+.board-wrap { min-width: 0; overflow-x: auto; isolation: isolate; direction: ltr; }
 
 /* Bands and lanes */
 .lane-title {
   margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2);
-  display: flex; align-items: center; gap: 8px; min-width: 0;
+  display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere;
 }
 .lane-title::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
 .lane-title:empty { display: none; }
 ol.nodes { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; min-width: 0; }
 ol.nodes > li { min-width: 0; display: grid; }
+ol.nodes > li > .panel { margin-top: 10px; }
 .band { display: grid; gap: 10px; min-width: 0; position: relative; z-index: 1; }
 .band.after .lane-title { order: 2; }
 .flow { display: grid; min-width: 0; position: relative; z-index: 1; }
@@ -1639,13 +1642,13 @@ ol.nodes > li { min-width: 0; display: grid; }
   margin: -6px; pointer-events: none; z-index: 0;
 }
 .group-box > span {
-  position: absolute; top: -9px; left: 10px; padding: 0 6px; background: var(--paper);
-  font: 500 11px/1.4 var(--mono); color: var(--ink-2);
+  position: absolute; top: -9px; left: 10px; max-width: calc(100% - 20px); padding: 0 6px; background: var(--paper);
+  font: 500 11px/1.4 var(--mono); color: var(--ink-2); overflow-wrap: anywhere;
 }
 
 /* Nodes */
 .node {
-  position: relative; display: block; width: 100%; min-width: 0; text-align: left;
+  position: relative; display: block; width: 100%; min-width: 0; text-align: start;
   background: var(--sheet); border: 1px solid var(--rule); border-radius: 4px;
   padding: 9px 12px 10px; cursor: pointer;
   transition: opacity .2s, border-color .2s, box-shadow .2s;
@@ -1653,8 +1656,10 @@ ol.nodes > li { min-width: 0; display: grid; }
 .node .t { display: block; font-weight: 600; font-size: 14px; line-height: 1.3; overflow-wrap: anywhere; }
 .node .s { display: block; font: 11.5px/1.35 var(--mono); color: var(--ink-2); margin-top: 2px; overflow-wrap: anywhere; }
 .node:hover { border-color: var(--ink-2); }
-.board.has-selection .node { opacity: .34; }
-.board.has-selection .node.on, .board.has-selection .node.near-in, .board.has-selection .node.near-out { opacity: 1; }
+/* Nodes outside the selection step back without losing their text: paper instead of sheet, a faint
+   border and the secondary ink, which keeps 4.5:1 on the paper (WCAG 1.4.3). Opacity would not. */
+.board.has-selection .node:not(.on, .near-in, .near-out) { background: var(--paper); border-color: var(--grid); }
+.board.has-selection .node:not(.on, .near-in, .near-out) .t { color: var(--ink-2); font-weight: 500; }
 .node.on { border-color: var(--out); box-shadow: 0 0 0 1.5px var(--out); }
 .node.near-out { border-color: var(--out); }
 .node.near-in { border-color: var(--in); }
@@ -1688,8 +1693,9 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .atlas[data-panel="side"] .panel { position: sticky; top: 16px; }
 .atlas[data-panel="below"] .panel { position: sticky; bottom: 12px; max-height: 42vh; overflow: auto; box-shadow: 0 12px 32px -8px var(--shadow); }
 .panel .p-lane { margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2); }
-.panel h3 { margin: 0; font-size: 1.4rem; line-height: 1.2; text-wrap: balance; }
-.panel .p-sub { margin: 0; font: 12.5px/1.4 var(--mono); color: var(--ink-2); }
+.panel h3 { margin: 0; font-size: 1.4rem; line-height: 1.2; text-wrap: balance; overflow-wrap: anywhere; }
+.panel .p-sub { margin: 0; font: 12.5px/1.4 var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
+.panel li { overflow-wrap: anywhere; }
 .panel ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; list-style: disc; } /* inline, the panel sits in a lane's list */
 .rel { display: grid; gap: 6px; }
 .rel h4 { margin: 4px 0 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; display: flex; align-items: center; gap: 8px; }
@@ -1697,7 +1703,7 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .rel[data-dir="in"] h4 { color: var(--in); } .rel[data-dir="in"] h4::before { background: var(--in); }
 .rel[data-dir="out"] h4 { color: var(--out); } .rel[data-dir="out"] h4::before { background: var(--out); }
 .rel ul { list-style: none; padding: 0; }
-.rel button { display: grid; gap: 1px; width: 100%; text-align: left; background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 7px 10px; cursor: pointer; }
+.rel button { display: grid; gap: 1px; width: 100%; min-width: 0; text-align: start; background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 7px 10px; cursor: pointer; }
 .rel button:hover { border-color: var(--ink-2); }
 .rel .rt { font-weight: 600; font-size: 13.5px; }
 .rel .rw { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; }
@@ -2178,8 +2184,7 @@ class Atlas extends EventTarget {
     const bandEl = (band, kind) => {
       const sec = el("section", `band ${kind}`);
       sec.dataset.lane = band.id;
-      const title = el("h3", "lane-title");
-      title.textContent = band.title ?? "";
+      const title = txt("h3", "lane-title", band.title ?? "");
       const spacer = el("div", `channel ch-${kind === "before" ? "ca" : "cz"}`);
       const list = el("ol", "nodes");
       const ids = L.order.get(band.id);
@@ -2243,8 +2248,7 @@ class Atlas extends EventTarget {
       const sec = el("section", "lane");
       sec.dataset.lane = lane.id;
       const track = reversed ? 2 * (N - 1 - k) + 2 : 2 * k + 2;
-      const title = el("h3", "lane-title");
-      title.textContent = lane.id === M.UNASSIGNED ? this.labels.unassigned : (lane.title ?? "");
+      const title = txt("h3", "lane-title", lane.id === M.UNASSIGNED ? this.labels.unassigned : (lane.title ?? ""));
       const list = el("ol", "nodes");
       if (vertical) {
         sec.style.gridRow = `${track}`;
@@ -2272,8 +2276,7 @@ class Atlas extends EventTarget {
       // Group boxes, drawn behind the nodes of their slot span.
       for (const span of L.groups.filter(s => s.lane === lane.id)) {
         const box = el("div", "group-box");
-        const label = el("span");
-        label.textContent = span.title;
+        const label = txt("span", "", span.title);
         box.append(label);
         if (vertical) { box.style.gridColumn = `${span.from + 1} / ${span.to + 2}`; box.style.gridRow = "1"; }
         else { box.style.gridRow = `${span.from + 1} / ${span.to + 2}`; box.style.gridColumn = "1"; }
@@ -2333,11 +2336,10 @@ class Atlas extends EventTarget {
     b.setAttribute("part", ["node", type && `node-${type}`, live.status && `status-${live.status}`].filter(Boolean).join(" "));
     if (live.status) b.dataset.status = live.status; else delete b.dataset.status;
     if (this.options.renderNode) { this.options.renderNode(M.clone(n), b, { ...live }); return; }
-    const t = el("span", "t");
-    t.textContent = n.title ?? n.id;
+    const t = txt("span", "t", n.title ?? n.id);
     const sub = live.subtitle ?? n.subtitle;
     const parts = [t];
-    if (sub) { const s = el("span", "s"); s.textContent = sub; parts.push(s); }
+    if (sub) parts.push(txt("span", "s", sub));
     b.replaceChildren(...parts);
   }
 
@@ -2376,7 +2378,8 @@ class Atlas extends EventTarget {
 
   _placePanel() {
     const inline = this._wrap.dataset.panel === "inline";
-    if (inline && this._selected && this._items.has(this._selected)) this._items.get(this._selected).after(this._panel);
+    // Inline, the detail goes inside the selected node's <li>: an <ol> holds only <li>s.
+    if (inline && this._selected && this._items.has(this._selected)) this._items.get(this._selected).append(this._panel);
     else if (!inline && this._panel.parentNode !== this._wrap) this._wrap.insertBefore(this._panel, this._status);
     this._panel.hidden = this._selected === null || this._wrap.dataset.panel === "none";
   }
@@ -2412,16 +2415,14 @@ class Atlas extends EventTarget {
     const laneId = L.laneOf.get(id);
     const lane = [L.before, ...L.flow, L.after].find(l => l && l.id === laneId);
     const kids = [];
-    const p = el("p", "p-lane");
-    p.textContent = laneId === M.UNASSIGNED ? this.labels.unassigned : (lane?.title ?? "");
-    const h = el("h3");
-    h.textContent = n.title ?? n.id;
+    const p = txt("p", "p-lane", laneId === M.UNASSIGNED ? this.labels.unassigned : (lane?.title ?? ""));
+    const h = txt("h3", "", n.title ?? n.id);
     kids.push(p, h);
     const sub = this._live.get(id)?.subtitle ?? n.subtitle;
-    if (sub) { const s = el("p", "p-sub"); s.textContent = sub; kids.push(s); }
+    if (sub) kids.push(txt("p", "p-sub", sub));
     if (Array.isArray(n.details) && n.details.length) {
       const ul = el("ul");
-      for (const d of n.details) { const li = el("li"); li.textContent = d; ul.append(li); }
+      for (const d of n.details) ul.append(txt("li", "", d));
       kids.push(ul);
     }
     const rel = (dir, edges, other) => {
@@ -2435,11 +2436,9 @@ class Atlas extends EventTarget {
         const li = el("li");
         const b = el("button");
         b.type = "button";
-        const a = el("span", "rt");
         const target = this._model.nodes.find(x => x.id === other(e));
-        a.textContent = target?.title ?? other(e);
-        b.append(a);
-        if (e.label) { const w = el("span", "rw"); w.textContent = e.label; b.append(w); }
+        b.append(txt("span", "rt", target?.title ?? other(e)));
+        if (e.label) b.append(txt("span", "rw", e.label));
         b.addEventListener("click", () => this.select(other(e)));
         li.append(b);
         ul.append(li);
@@ -2823,6 +2822,15 @@ function reducedMotion() {
 function el(tag, className) {
   const e = document.createElement(tag);
   if (className) e.className = className;
+  return e;
+}
+
+/** An element holding the board's own text: its direction follows the text, so an Arabic or Hebrew
+ *  title reads and aligns right to left while the board's geometry stays left to right. */
+function txt(tag, className, text) {
+  const e = el(tag, className);
+  e.dir = "auto";
+  e.textContent = text;
   return e;
 }
 

@@ -442,8 +442,7 @@ export class Atlas extends EventTarget {
     const bandEl = (band, kind) => {
       const sec = el("section", `band ${kind}`);
       sec.dataset.lane = band.id;
-      const title = el("h3", "lane-title");
-      title.textContent = band.title ?? "";
+      const title = txt("h3", "lane-title", band.title ?? "");
       const spacer = el("div", `channel ch-${kind === "before" ? "ca" : "cz"}`);
       const list = el("ol", "nodes");
       const ids = L.order.get(band.id);
@@ -507,8 +506,7 @@ export class Atlas extends EventTarget {
       const sec = el("section", "lane");
       sec.dataset.lane = lane.id;
       const track = reversed ? 2 * (N - 1 - k) + 2 : 2 * k + 2;
-      const title = el("h3", "lane-title");
-      title.textContent = lane.id === M.UNASSIGNED ? this.labels.unassigned : (lane.title ?? "");
+      const title = txt("h3", "lane-title", lane.id === M.UNASSIGNED ? this.labels.unassigned : (lane.title ?? ""));
       const list = el("ol", "nodes");
       if (vertical) {
         sec.style.gridRow = `${track}`;
@@ -536,8 +534,7 @@ export class Atlas extends EventTarget {
       // Group boxes, drawn behind the nodes of their slot span.
       for (const span of L.groups.filter(s => s.lane === lane.id)) {
         const box = el("div", "group-box");
-        const label = el("span");
-        label.textContent = span.title;
+        const label = txt("span", "", span.title);
         box.append(label);
         if (vertical) { box.style.gridColumn = `${span.from + 1} / ${span.to + 2}`; box.style.gridRow = "1"; }
         else { box.style.gridRow = `${span.from + 1} / ${span.to + 2}`; box.style.gridColumn = "1"; }
@@ -597,11 +594,10 @@ export class Atlas extends EventTarget {
     b.setAttribute("part", ["node", type && `node-${type}`, live.status && `status-${live.status}`].filter(Boolean).join(" "));
     if (live.status) b.dataset.status = live.status; else delete b.dataset.status;
     if (this.options.renderNode) { this.options.renderNode(M.clone(n), b, { ...live }); return; }
-    const t = el("span", "t");
-    t.textContent = n.title ?? n.id;
+    const t = txt("span", "t", n.title ?? n.id);
     const sub = live.subtitle ?? n.subtitle;
     const parts = [t];
-    if (sub) { const s = el("span", "s"); s.textContent = sub; parts.push(s); }
+    if (sub) parts.push(txt("span", "s", sub));
     b.replaceChildren(...parts);
   }
 
@@ -640,7 +636,8 @@ export class Atlas extends EventTarget {
 
   _placePanel() {
     const inline = this._wrap.dataset.panel === "inline";
-    if (inline && this._selected && this._items.has(this._selected)) this._items.get(this._selected).after(this._panel);
+    // Inline, the detail goes inside the selected node's <li>: an <ol> holds only <li>s.
+    if (inline && this._selected && this._items.has(this._selected)) this._items.get(this._selected).append(this._panel);
     else if (!inline && this._panel.parentNode !== this._wrap) this._wrap.insertBefore(this._panel, this._status);
     this._panel.hidden = this._selected === null || this._wrap.dataset.panel === "none";
   }
@@ -676,16 +673,14 @@ export class Atlas extends EventTarget {
     const laneId = L.laneOf.get(id);
     const lane = [L.before, ...L.flow, L.after].find(l => l && l.id === laneId);
     const kids = [];
-    const p = el("p", "p-lane");
-    p.textContent = laneId === M.UNASSIGNED ? this.labels.unassigned : (lane?.title ?? "");
-    const h = el("h3");
-    h.textContent = n.title ?? n.id;
+    const p = txt("p", "p-lane", laneId === M.UNASSIGNED ? this.labels.unassigned : (lane?.title ?? ""));
+    const h = txt("h3", "", n.title ?? n.id);
     kids.push(p, h);
     const sub = this._live.get(id)?.subtitle ?? n.subtitle;
-    if (sub) { const s = el("p", "p-sub"); s.textContent = sub; kids.push(s); }
+    if (sub) kids.push(txt("p", "p-sub", sub));
     if (Array.isArray(n.details) && n.details.length) {
       const ul = el("ul");
-      for (const d of n.details) { const li = el("li"); li.textContent = d; ul.append(li); }
+      for (const d of n.details) ul.append(txt("li", "", d));
       kids.push(ul);
     }
     const rel = (dir, edges, other) => {
@@ -699,11 +694,9 @@ export class Atlas extends EventTarget {
         const li = el("li");
         const b = el("button");
         b.type = "button";
-        const a = el("span", "rt");
         const target = this._model.nodes.find(x => x.id === other(e));
-        a.textContent = target?.title ?? other(e);
-        b.append(a);
-        if (e.label) { const w = el("span", "rw"); w.textContent = e.label; b.append(w); }
+        b.append(txt("span", "rt", target?.title ?? other(e)));
+        if (e.label) b.append(txt("span", "rw", e.label));
         b.addEventListener("click", () => this.select(other(e)));
         li.append(b);
         ul.append(li);
@@ -1087,6 +1080,15 @@ function reducedMotion() {
 function el(tag, className) {
   const e = document.createElement(tag);
   if (className) e.className = className;
+  return e;
+}
+
+/** An element holding the board's own text: its direction follows the text, so an Arabic or Hebrew
+ *  title reads and aligns right to left while the board's geometry stays left to right. */
+function txt(tag, className, text) {
+  const e = el(tag, className);
+  e.dir = "auto";
+  e.textContent = text;
   return e;
 }
 
