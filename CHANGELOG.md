@@ -88,6 +88,9 @@ a browser-audit or Node check that fails on 0.3.2.
 - The focus ring was the blue of "incoming".
 - A very long unbroken title widened the detail panel past the screen.
 - Alt with Left or Right inside the map no longer goes Back or Forward in Chrome and Edge.
+- With classic scroll bars (Windows), nodes in flight made the box around the board scroll for the
+  length of a move: a scroll bar flashed on edits and every node jumped 12-24 px. The board now
+  clips its overflow.
 
 ### Development
 
