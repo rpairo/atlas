@@ -433,11 +433,11 @@ try {
     if (ul && getComputedStyle(ul).listStyleType !== "disc") res.behaviour.push(`detail bullets are ${getComputedStyle(ul).listStyleType}`);
     map.select(null, { focus: false });
   }
-  const dry = map.reorderAll({ dryRun: true }).swaps, revBefore = map.rev;
-  const done = map.reorderAll().swaps;
-  if (dry !== done) res.behaviour.push(`reorderAll counted ${dry} in a dry run and ${done} for real`);
-  if ((done === 0) !== (map.rev === revBefore)) res.behaviour.push("reorderAll changed the revision without changing the order, or the reverse");
-  if (done) map.undo();
+  const dry = map.reorderAll({ dryRun: true }), revBefore = map.rev;
+  const done = map.reorderAll();
+  if (dry.swaps !== done.swaps || dry.layers !== done.layers) res.behaviour.push(`reorderAll counted ${JSON.stringify(dry)} in a dry run and ${JSON.stringify(done)} for real`);
+  if ((done.swaps + done.layers === 0) !== (map.rev === revBefore)) res.behaviour.push("reorderAll changed the revision without changing the order, or the reverse");
+  if (done.swaps + done.layers) map.undo();
   // Presentation: dimmed nodes keep readable text, long unbroken text wraps instead of overflowing,
   // and inline the detail sits inside the selected node's <li> (an <ol> holds only <li>s).
   try {
@@ -494,6 +494,12 @@ try {
     map.undo();
     map.batch(b => b.apply({ op: "renameNode", from: q0, to: "audit_sel" })); same("audit_sel", "batch of a rename");
     map.undo(); same(q0, "undo of a batch rename");
+    // A node removed and another added in its place, with the same fields, is a new node: it does
+    // not inherit the live state of the one that left.
+    const { id: _gone, ...fields } = map.node(q0);
+    map.batch(b => { b.removeNode(q0); b.apply({ op: "addNode", node: { ...fields, id: "audit_twin" }, index: 0 }); });
+    if (map._els.get("audit_twin") === el0 || (map._els.get("audit_twin")?.getAttribute("part") ?? "").includes("status-")) res.behaviour.push("a node added in place of a removed one took over its element or live state");
+    map.undo();
     const back = map.node(q0);
     map.removeNode(q0);
     if (map.selected !== null || sel.at(-1) !== null) res.behaviour.push("removing the selected node left it selected or said nothing");
@@ -682,6 +688,15 @@ try {
       m._paint = paint;
       if (early) res.motion.push("a selection during a move drew wires on nodes in flight");
       m.settle(); m.undo(); m.settle();
+      // A node selected with focus while it moves is scrolled into view where it lands.
+      scrollTo(0, 0);
+      shove(m);
+      const target = m._layout.order.get(m._layout.flow.at(-1).id).at(-1);
+      m.select(target);
+      m.settle();
+      const tr = m._els.get(target).getBoundingClientRect();
+      if (tr.top < -1 || tr.bottom > innerHeight + 1) res.motion.push(`${target}, selected while moving, ended off screen (${Math.round(tr.top)}-${Math.round(tr.bottom)} of ${innerHeight})`);
+      m.undo(); m.settle(); scrollTo(0, 0);
       // A removed node fades out as itself, where it was.
       const gone = ids.find(x => x !== someone);
       const was = m._els.get(gone).getBoundingClientRect(), title = m._els.get(gone).textContent;
@@ -730,6 +745,12 @@ try {
           m.settle();
           const should = m._wires.filter(w => was.has(key(w)) && sameShape(was.get(key(w)), w.screen) && JSON.stringify(was.get(key(w))) !== JSON.stringify(w.screen));
           if (should.length && !reshaped) res.motion.push(`${should.length} wires of ${mover} kept their shape but did not reshape with it`);
+          // A reshaped wire is drawn whole: the dashes of its first trace were cut to its old length.
+          for (const w of m.root.querySelectorAll(".wire")) {
+            const dash = getComputedStyle(w).strokeDasharray;
+            const first = parseFloat(dash);
+            if (dash !== "none" && !w.classList.contains("backward") && first + 1 < w.getTotalLength()) { res.motion.push(`a reshaped wire shows ${first.toFixed(0)} of its ${w.getTotalLength().toFixed(0)}px`); break; }
+          }
           m.undo(); m.settle();
         }
       }

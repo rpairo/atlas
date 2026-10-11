@@ -25,6 +25,11 @@ test("many nodes changing lane and row move along the flow first, then across", 
   assert.deepEqual(down.moves.find(m => m.id === "a").mid, [49, 0]);
 });
 
+test("a few pixels along the flow (a gutter widening by a track) is not a lane change", () => {
+  const nudge = Array.from({ length: 8 }, (_, i) => ({ id: "n" + i, dx: -11, dy: i < 4 ? 49 : 0 }));
+  assert.equal(planMove(nudge, "right").split, false);
+});
+
 test("an edit and its undo take the same time", () => {
   const there = [{ id: "a", dx: -300, dy: 40 }, { id: "b", dx: -300, dy: -80 }, { id: "c", dx: -300, dy: 10 }, { id: "d", dx: 5, dy: 120 }];
   const back = there.map(m => ({ ...m, dx: -m.dx, dy: -m.dy }));

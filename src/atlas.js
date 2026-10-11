@@ -208,7 +208,7 @@ export class Atlas extends EventTarget {
   apply(ops) {
     const before = this._model;
     const { model, warnings } = M.apply(before, ops);
-    this._commit(before, model, warnings);
+    this._commit(before, model, warnings, renamesOf(ops));
     return this._rev;
   }
 
@@ -217,7 +217,7 @@ export class Atlas extends EventTarget {
     const before = this._model;
     const proxy = new Batch(this, before);
     fn(proxy);
-    if (proxy.model !== before) this._commit(before, proxy.model, proxy.warnings);
+    if (proxy.model !== before) this._commit(before, proxy.model, proxy.warnings, proxy.renames);
     return this._rev;
   }
 
@@ -269,41 +269,51 @@ export class Atlas extends EventTarget {
   reorderAll({ dryRun = false } = {}) {
     if (this._destroyed) return { swaps: 0, layers: 0 };
     const now = this._layout ?? computeLayout(this._model);
-    // Without flow lanes the layers are computed afresh too (pinned nodes keep theirs): the reset for
-    // the drift that many edits leave.
-    const free = { ...this._model, nodes: this._model.nodes.map(n => { if (n.pinned || n.layer === undefined) return n; const { layer: _, ...rest } = n; return rest; }) };
+    // Without flow lanes the layers are computed afresh too, from the edges alone (pinned nodes keep
+    // theirs where the edges allow): the reset for the drift that many edits leave. Only Atlas's own
+    // whole-number layers are dropped for that; other values in the field are the board's data.
+    const free = { ...this._model, nodes: this._model.nodes.map(n => { if (n.pinned || !Number.isSafeInteger(n.layer)) return n; const { layer: _, ...rest } = n; return rest; }) };
     const tidied = computeLayout(free, { optimize: true });
     let m = withLayers(withOrder(free, tidied, true), tidied);
     // Groups and constraints apply again when the result is drawn. A lane where that would move a
-    // pinned node keeps its current order: pinned nodes never move.
+    // pinned node keeps its current order: pinned nodes never move inside a lane that keeps its
+    // nodes (a lane of computed layers that gains or loses nodes is laid out anew).
     const drawn = computeLayout(m);
     const pinned = new Set(this._model.nodes.filter(n => n.pinned).map(n => n.id));
-    const kept = [...now.order].filter(([lane, ids]) => ids.some((id, i) => pinned.has(id) && drawn.order.get(lane)?.[i] !== id)).map(([lane]) => lane);
+    const sameNodes = (a, b) => !!a && !!b && a.length === b.length && a.every(x => b.includes(x));
+    const kept = [...drawn.order].filter(([lane, ids]) => sameNodes(ids, now.order.get(lane)) && ids.some((id, i) => pinned.has(id) && now.order.get(lane)[i] !== id)).map(([lane]) => lane);
     if (kept.length) m = withOrder(m, { ...drawn, order: new Map([...drawn.order].map(([lane, ids]) => [lane, kept.includes(lane) ? now.order.get(lane) : ids])) });
     // Counted on the result, after pinned nodes went back to their places: pairs of nodes that swap
-    // inside a lane, and nodes that change layer.
+    // inside a lane, and pairs of nodes whose columns change order (a new column alone moves none).
     const after = computeLayout(m);
     const swaps = inversions(now, after);
-    const layers = [...now.layers].filter(([id, l]) => after.layers.has(id) && after.layers.get(id) !== l).length;
+    const ids = [...now.layers.keys()].filter(id => after.layers.has(id));
+    let layers = 0;
+    for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+      const a = Math.sign(now.layers.get(ids[i]) - now.layers.get(ids[j])), b = Math.sign(after.layers.get(ids[i]) - after.layers.get(ids[j]));
+      if (a !== b) layers++;
+    }
     if (dryRun || (swaps === 0 && layers === 0)) return { swaps, layers };
     this._commit(this._model, m, this._warnings);
     return { swaps, layers };
   }
 
+  // History steps are { model, renames }: the board before the step and the renames the step made,
+  // so undo and redo rename back and forth exactly.
   undo() {
     if (this._destroyed) return false;
     const prev = this._history.pop();
     if (!prev) return false;
-    this._future.push(this._model);
-    this._swap(prev);
+    this._future.push({ model: this._model, renames: prev.renames });
+    this._swap(prev.model, prev.renames.map(([from, to]) => [to, from]).reverse());
     return true;
   }
   redo() {
     if (this._destroyed) return false;
     const next = this._future.pop();
     if (!next) return false;
-    this._history.push(this._model);
-    this._swap(next);
+    this._history.push({ model: this._model, renames: next.renames });
+    this._swap(next.model, next.renames);
     return true;
   }
   /** Forgets every undo and redo step (for example once the board is saved). */
@@ -356,6 +366,9 @@ export class Atlas extends EventTarget {
     running.forEach(a => a.finish());
     this._ghosts.replaceChildren();
     this._paint(false);
+    const late = this._revealAfter;
+    this._revealAfter = null;
+    if (late?.isConnected) this._reveal(late, true);   // settled now: no smooth scroll still to come
   }
 
   /** Frees the map: observers, frames and animations stop and the content is removed. Final: a
@@ -380,50 +393,44 @@ export class Atlas extends EventTarget {
   // -------------------------------------------------------------------------------------------
   // Internals: commit, history
 
-  _commit(before, after, warnings) {
+  _commit(before, after, warnings, renames = []) {
     if (this._destroyed) return;
     after = withLayers(after, computeLayout(after));
     // An edit that changes nothing (same title, empty list of operations) makes no undo step.
     if (after === before || JSON.stringify(M.serialize(after)) === JSON.stringify(M.serialize(before))) return;
-    this._history.push(before);
+    this._history.push({ model: before, renames });
     while (this._history.length > this.options.historyLimit) this._history.shift();
     this._future = [];
     this._model = after;
     this._warnings = warnings ?? [];
     this._rev++;
     const d = M.diff(before, after);
-    const followed = this._follow(before, after, d);
+    const followed = this._follow(renames);
     this._render({ animate: true, diff: d });
     this._emit("change", { rev: this._rev, diff: d, warnings: this.warnings });
     if (followed) this._emit("select", { id: this._selected });
   }
 
-  _swap(model) {
+  _swap(model, renames) {
     const before = this._model;
     this._model = model;
     this._warnings = M.validate(model).warnings;
     this._rev++;
     const d = M.diff(before, model);
-    const followed = this._follow(before, model, d);
+    const followed = this._follow(renames);
     this._render({ animate: true, diff: d });
     this._emit("change", { rev: this._rev, diff: d, warnings: this.warnings });
     if (followed) this._emit("select", { id: this._selected });
   }
 
   /** A node renamed by an edit, a batch, undo or redo keeps its element on screen (with its live
-   *  state, its focus and its place), and the selection follows it: a rename leaves a node at the
-   *  same index with the same content under another id. Returns whether the selection moved. */
-  _follow(before, after, d) {
-    if (!d.nodes.removed.length || !d.nodes.added.length) return false;
-    const was = new Map(before.nodes.map((n, i) => [n.id, i]));
-    const added = new Set(d.nodes.added);
+   *  state, its focus, its marks and its place), and the selection follows it. `renames` are the
+   *  step's renameNode operations, in order. Returns whether the selection moved. */
+  _follow(renames = []) {
     const swapKey = (map, a, b) => { if (map.has(a)) { map.set(b, map.get(a)); map.delete(a); } };
     let followed = false;
-    for (const from of d.nodes.removed) {
-      const i = was.get(from), to = after.nodes[i]?.id;
-      if (!added.has(to) || !this._els.has(from) || this._els.has(to)) continue;
-      const { id: _a, ...a } = before.nodes[i], { id: _b, ...b } = after.nodes[i];
-      if (JSON.stringify(a) !== JSON.stringify(b)) continue;
+    for (const [from, to] of renames) {
+      if (!this._els.has(from) || this._els.has(to)) continue;
       swapKey(this._els, from, to);
       swapKey(this._items, from, to);
       swapKey(this._live, from, to);
@@ -835,19 +842,26 @@ export class Atlas extends EventTarget {
     return li;
   }
 
-  /** A node's CSS parts: node, node-<type>, status-<status>, selected, marked, marked-current. */
+  /** A node's own CSS parts: node, node-<type>, status-<status>. */
   _partOf(n) {
     const live = this._live.get(n.id) ?? {};
     const type = typeof n.type === "string" && /^[A-Za-z0-9_-]{1,32}$/.test(n.type) ? n.type : null;
-    const marked = this._marks.includes(n.id);
-    return ["node", type && `node-${type}`, live.status && `status-${live.status}`, n.id === this._selected && "selected",
-      marked && "marked", marked && n.id === this._markAt && "marked-current"].filter(Boolean).join(" ");
+    return ["node", type && `node-${type}`, live.status && `status-${live.status}`].filter(Boolean).join(" ");
+  }
+
+  /** The parts of the map's state on a node (selected, marked, marked-current), toggled one by one
+   *  so the parts a renderNode added stay. */
+  _stateParts(id, b) {
+    b.part.toggle("selected", id === this._selected);
+    b.part.toggle("marked", this._marks.includes(id));
+    b.part.toggle("marked-current", id === this._markAt);
   }
 
   _fillNode(n, b) {
     if (!n || !b) return;
     const live = this._live.get(n.id) ?? {};
     b.setAttribute("part", this._partOf(n));
+    this._stateParts(n.id, b);
     if (live.status) b.dataset.status = live.status; else delete b.dataset.status;
     if (this.options.renderNode) { this.options.renderNode(M.clone(n), b, { ...live }); return; }
     const t = txt("span", "t", n.title ?? n.id);
@@ -961,14 +975,13 @@ export class Atlas extends EventTarget {
       if (e.to === id && e.from !== id) ins.add(e.from);
     }
     const marks = new Set(this._marks);
-    const byId = new Map(this._model.nodes.map(n => [n.id, n]));
     for (const [nid, b] of this._els) {
       b.classList.toggle("on", nid === id);
       b.classList.toggle("near-out", outs.has(nid));
       b.classList.toggle("near-in", ins.has(nid));
       b.classList.toggle("marked", marks.has(nid));
       b.classList.toggle("marked-current", nid === this._markAt);
-      if (byId.has(nid)) b.setAttribute("part", this._partOf(byId.get(nid)));
+      this._stateParts(nid, b);
       // The selection is the current node of the map, not a toggle (aria-pressed read "toggle button,
       // not pressed" on every node).
       if (nid === id) b.setAttribute("aria-current", "true"); else b.removeAttribute("aria-current");
@@ -1342,7 +1355,8 @@ export class Atlas extends EventTarget {
     for (const [id, b] of this._els) now.set(id, b.getBoundingClientRect());
     const decor = [...board.querySelectorAll("[data-key]")].map(e => [e, e.getBoundingClientRect()]);
     const r = this._route();
-    const focus = mode === "reduce" ? getComputedStyle(this._wrap).getPropertyValue("--focus").trim() : "";
+    const css = mode === "reduce" ? getComputedStyle(this._wrap) : null;
+    const tint = css ? `color-mix(in srgb, ${css.getPropertyValue("--focus").trim() || "currentColor"} 22%, ${css.getPropertyValue("--sheet").trim() || "transparent"})` : "";
 
     const added = [...now.keys()].filter(id => !first.nodes.has(id));
     const removed = [...first.nodes.keys()].filter(id => !now.has(id));
@@ -1355,12 +1369,12 @@ export class Atlas extends EventTarget {
     }
 
     if (mode === "reduce") {
-      // Nothing travels: the nodes that moved or changed show an outline that fades, new nodes fade
+      // Nothing travels: the nodes that moved or changed show a tint that fades, new nodes fade
       // in, and the wires are drawn at once.
       this._draw(r, null);
       const changed = new Set([...moves.map(m => m.id), ...(diff?.nodes.changed ?? [])].filter(id => this._els.has(id)));
-      const cue = [{ outline: `2px solid ${focus || "currentColor"}`, outlineOffset: "2px" }, { outline: "2px solid transparent", outlineOffset: "2px" }];
-      for (const id of changed) this._cues.push(this._els.get(id).animate(cue, { duration: MOTION.cue, easing: "ease-out" }));
+      // A tint that fades: an outline would hide the focus ring of a focused node.
+      for (const id of changed) this._cues.push(this._els.get(id).animate([{ backgroundColor: tint }, {}], { duration: MOTION.cue, easing: "ease-out" }));
       for (const id of added) this._cues.push(this._els.get(id).animate([{ opacity: 0 }, { opacity: 1 }], { duration: 150, easing: "ease-out" }));
       return;
     }
@@ -1421,7 +1435,8 @@ export class Atlas extends EventTarget {
     for (const m of plan.moves) anims.push(this._els.get(m.id).animate(frames(m.dx, m.dy, m.mid), timing));
     for (const m of decorMoves) anims.push(m.e.animate(frames(m.dx, m.dy, plan.split ? (vertical ? [m.dx, 0] : [0, m.dy]) : null), timing));
     for (const [o, w] of reshape) {
-      for (const e of [o.halo, o.line]) { e.setAttribute("d", w.d); anims.push(e.animate([{ d: `path("${o.d}")` }, { d: `path("${w.d}")` }], timing)); }
+      // Already drawn: the trace's dashes were cut to the old length and would leave the end bare.
+      for (const e of [o.halo, o.line]) { e.classList.remove("draw"); e.setAttribute("d", w.d); anims.push(e.animate([{ d: `path("${o.d}")` }, { d: `path("${w.d}")` }], timing)); }
       const ad = arrowOf(w.screen);
       anims.push(o.arrow.animate([{ d: `path("${o.arrow.getAttribute("d")}")` }, { d: `path("${ad}")` }], timing));
       o.arrow.setAttribute("d", ad);
@@ -1443,6 +1458,9 @@ export class Atlas extends EventTarget {
     const done = () => {
       if (this._animations !== anims) return;   // stopped, settled or replaced by another edit
       this._animations = [];
+      const late = this._revealAfter;
+      this._revealAfter = null;
+      if (late?.isConnected) this._reveal(late);
       const after = this._after;
       this._after = null;
       if (after) { this._paint(after.animate); return; }
@@ -1470,19 +1488,21 @@ export class Atlas extends EventTarget {
     const b = this._els.get(id);
     b.tabIndex = 0;
     if (focus && this.root.activeElement !== b) b.focus({ preventScroll: true });
-    if (reveal) this._reveal(b);
+    // A node in flight would be scrolled to where it is passing: reveal it once it is in place.
+    if (reveal && this._moving()) this._revealAfter = b;
+    else if (reveal) this._reveal(b);
   }
 
   /** Scrolls a node into view, sideways inside the board too, and above the detail drawer when the
    *  panel below the board covers the foot of the screen. */
-  _reveal(b) {
+  _reveal(b, instant = false) {
     const sheet = this._wrap.dataset.panel === "sheet" && !this._panel.hidden;
     // The sheet stays at the foot of the window: keep the node 12px clear of it. Open, it may still be
     // growing (its height animates): count it at its largest.
     const tall = this._sheet === "open" ? Math.min(Math.max(0.42 * innerHeight, 280), innerHeight - 120) + 12 : 0;
     const reserve = sheet ? Math.max(tall, Math.ceil(innerHeight - this._panel.getBoundingClientRect().top)) + 12 : 0;
     b.style.scrollMarginBottom = sheet ? `${reserve}px` : "";
-    b.scrollIntoView({ block: "nearest", inline: "nearest", behavior: this.options.animate && !reducedMotion() ? "smooth" : "auto" });
+    b.scrollIntoView({ block: "nearest", inline: "nearest", behavior: this.options.animate && !instant && !reducedMotion() ? "smooth" : "auto" });
   }
 
   _ordered() {
@@ -1554,11 +1574,12 @@ export class Atlas extends EventTarget {
 // A batch collects edits on a working copy and commits them as one step.
 
 class Batch {
-  constructor(atlas, model) { this.atlas = atlas; this.model = model; this.warnings = []; }
+  constructor(atlas, model) { this.atlas = atlas; this.model = model; this.warnings = []; this.renames = []; }
   apply(ops) {
     const r = M.apply(this.model, ops);
     this.model = r.model;
     this.warnings = r.warnings;
+    this.renames.push(...renamesOf(ops));
     return this;
   }
   addNode(node, { index, edges = [] } = {}) {
@@ -1595,6 +1616,11 @@ class Batch {
 
 // -----------------------------------------------------------------------------------------------
 // Helpers
+
+/** The renames made by operations, in order: [from, to] pairs. */
+function renamesOf(ops) {
+  return (Array.isArray(ops) ? ops : [ops]).filter(o => o?.op === "renameNode" && typeof o.from === "string" && typeof o.to === "string").map(o => [o.from, o.to]);
+}
 
 /** A model whose node order follows a layout's lane order (the new sketch). */
 function withOrder(model, L, keepPinned = false) {

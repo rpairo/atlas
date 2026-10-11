@@ -158,17 +158,23 @@ test("only an edge that closes a cycle is drawn backwards, the same one every ti
   assert.equal(layout(bad).edgeClass.get("a->b"), "forward");
 });
 
-test("layer is a whole number from 0; Atlas drops it on boards with flow lanes", () => {
+test("layer from a board's own data is kept: a warning, never an error, never removed", () => {
   const base = load({ nodes: [{ id: "a" }] }).model;
-  for (const layer of [-1, 1.5, "2", true, 1e9]) {
+  for (const layer of [1.5, "data", true, { x: 1 }]) {
     const r = validate({ ...base, nodes: [{ id: "a", layer }] });
-    assert.ok(r.errors.some(e => e.path === "nodes[0].layer" && e.code === "type"), `layer ${JSON.stringify(layer)}`);
+    assert.equal(r.ok, true);
+    assert.ok(r.warnings.some(w => w.path === "nodes[0].layer" && w.code === "ignored"), `layer ${JSON.stringify(layer)}`);
+    // On a board without lanes it is not overwritten, and the node is placed as if it had none.
+    const m = open({ nodes: [{ id: "a", layer }, { id: "b" }], edges: E(["a", "b"]) });
+    assert.deepEqual(m.nodes[0].layer, layer);
+    assert.deepEqual([...layers(m)].sort(), [["a", 0], ["b", 1]]);
   }
-  for (const layer of [0, 5]) assert.equal(load({ nodes: [{ id: "a", layer }] }).model.nodes[0].layer, layer);
-  const laned = open({ lanes: [{ id: "L" }], nodes: [{ id: "a", lane: "L", layer: 4 }] });
-  assert.equal(laned.nodes[0].layer, undefined);
+  for (const layer of [0, 5, -3]) assert.equal(validate({ ...base, nodes: [{ id: "a", layer }] }).warnings.length, 0);
+  // Boards with flow lanes and nodes in bands keep whatever they had.
+  const laned = open({ lanes: [{ id: "L" }], nodes: [{ id: "a", lane: "L", layer: 4 }, { id: "b", lane: "L", layer: "x" }] });
+  assert.deepEqual(laned.nodes.map(n => n.layer), [4, "x"]);
   const banded = open({ lanes: [{ id: "top", kind: "before" }], nodes: [{ id: "a", lane: "top", layer: 2 }, { id: "b" }] });
-  assert.equal(banded.nodes.find(n => n.id === "a").layer, undefined);
+  assert.equal(banded.nodes.find(n => n.id === "a").layer, 2);
   assert.equal(banded.nodes.find(n => n.id === "b").layer, 0);
 });
 

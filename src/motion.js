@@ -13,8 +13,10 @@ export const MOTION = {
   exitEase: "cubic-bezier(.3,0,1,1)",
   enterEase: "cubic-bezier(0,0,0,1)",
   ease: "cubic-bezier(.2,0,0,1)",
-  cue: 600,                             // ms: the outline that marks a change under reduced motion
+  cue: 600,                             // ms: the tint that marks a change under reduced motion
   splitAt: 3,                           // nodes changing lane, and nodes changing row, to split a move
+  laneShift: 60,                        // px along the flow that count as changing lane (a gutter that
+                                        // widens by a track moves nodes ~11 px: not a lane change)
 };
 
 /** Duration of a move whose longest travel is `d` px: 250 ms at least, 700 ms at most. */
@@ -42,7 +44,7 @@ export function toFlow(direction, dx, dy) {
  */
 export function planMove(moves, direction) {
   const flow = moves.map(m => ({ ...m, d: toFlow(direction, m.dx, m.dy) }));
-  const along = flow.filter(m => Math.abs(m.d[0]) >= 0.5).length;
+  const along = flow.filter(m => Math.abs(m.d[0]) >= MOTION.laneShift).length;
   const across = flow.filter(m => Math.abs(m.d[1]) >= 0.5).length;
   const split = along >= MOTION.splitAt && across >= MOTION.splitAt;
   if (!split) {

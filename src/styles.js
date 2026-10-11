@@ -217,6 +217,7 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 @media (forced-colors: active) {
   .board:is(.has-selection, .has-marks) .node:not(.on, .near-in, .near-out, .marked) { border-color: GrayText; }
   .node.marked, .node.marked :is(.t, .s) { forced-color-adjust: none; background: Mark; color: MarkText; }
+  .node.marked { border-color: CanvasText; }   /* out of forced colours, its own border would be the author's faint rule */
   .node.marked::after { forced-color-adjust: none; background: MarkText; }
   .node.marked-current:not(:focus-visible) { outline: 2px dashed CanvasText; }
   .node.on::before, .node.near-in::before, .node.near-out::before { content: ""; position: absolute; inset: 2px; border-radius: 2px; pointer-events: none; }

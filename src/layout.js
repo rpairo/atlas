@@ -181,7 +181,7 @@ function resolveLanes(model) {
     mode = "auto";
     const free = model.nodes.filter(n => n.lane == null || (n.lane !== before?.id && n.lane !== after?.id));
     // Layers saved in the board (Atlas writes them, see withLayers) keep the drawing stable.
-    const hints = new Map(free.filter(n => Number.isInteger(n.layer) && n.layer >= 0).map(n => [n.id, n.layer]));
+    const hints = new Map(free.filter(n => Number.isSafeInteger(n.layer)).map(n => [n.id, n.layer]));
     const layerOf = hints.size ? stableLayers(free.map(n => n.id), model.edges, hints) : autoLayers(free.map(n => n.id), model.edges);
     const count = free.length ? Math.max(...layerOf.values()) + 1 : 0;
     for (let k = 0; k < count; k++) flow.push({ id: AUTO + k, title: "", kind: "flow", synthetic: true });
@@ -372,18 +372,19 @@ function compact(L) {
 
 /**
  * The model with each node's computed layer saved in its `layer` field, on a board without flow
- * lanes (nodes in a band and boards with flow lanes lose the field): loading or editing it later
- * keeps those layers wherever the edges allow. `L` is `layout(model)`.
+ * lanes: loading or editing it later keeps those layers wherever the edges allow. `L` is
+ * `layout(model)`. Only a missing or whole-number `layer` is written; anything else in that field
+ * is the board's own data and stays, as does the field on boards with flow lanes and in bands.
  */
 export function withLayers(model, L) {
-  const auto = L.mode === "auto";
+  if (L.mode !== "auto") return model;
   let changed = false;
   const nodes = model.nodes.map(n => {
-    const want = auto && L.layers.has(n.id) ? L.layers.get(n.id) : undefined;
+    if (!L.layers.has(n.id) || (n.layer !== undefined && !Number.isSafeInteger(n.layer))) return n;
+    const want = L.layers.get(n.id);
     if (n.layer === want) return n;
     changed = true;
-    const { layer: _, ...rest } = n;
-    return want === undefined ? rest : { ...rest, layer: want };
+    return { ...n, layer: want };
   });
   return changed ? { ...model, nodes } : model;
 }
