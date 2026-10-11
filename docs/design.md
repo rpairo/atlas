@@ -56,9 +56,12 @@ movement.
 model (format, validation, operations) → layout (pure) → corridor demand (pure) → DOM on a CSS grid
 with subgrid → one measuring pass → route (pure, flow coordinates: every direction is the same problem
 rotated) → SVG in three layers (halos, wires, marks). Undo keeps snapshots, so it is exact. The custom
-element is a thin wrapper. No Worker: placement and routing take milliseconds (the incident-response
-example, 35 nodes and 66 edges, routes its busiest selection in under 10 ms in Node; run
-`node test/bench-route.mjs` to measure a board).
+element is a thin wrapper. No Worker: placement and routing take milliseconds on boards like the
+examples (the incident-response example, 35 nodes and 66 edges, routes its busiest selection in under
+10 ms in Node; run `node test/bench-route.mjs` to measure a board). The search for the order of
+wires has a budget, `ROUTE.budget`, counted in work rather than time so every machine draws the
+same: a node with dozens of wires whose crossings cannot all be avoided stops at a few hundred
+milliseconds with the best order found, instead of trying every order.
 
 ## References
 

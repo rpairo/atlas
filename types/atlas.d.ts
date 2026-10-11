@@ -398,6 +398,8 @@ export declare const ROUTE: Readonly<{
   minSeparation: number;
   arrow: number;
   radius: number;
+  /** Most search work one `route()` may spend (pairs of segments compared); past it, the best order found is kept. */
+  budget: number;
 }>;
 
 // ---------------------------------------------------------------------------------------------

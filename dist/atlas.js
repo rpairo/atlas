@@ -1152,6 +1152,12 @@ const ROUTE = Object.freeze({
   minSeparation: 6,
   arrow: 8,
   radius: 7,
+  // Most work one route() may spend searching orders, in pairs of segments compared (about 50 ms
+  // per million on a 2026 laptop). The busiest node of the examples and of a 35-node home map
+  // spends under 3 million; a hub with dozens of wires would spend hundreds of millions. Past the
+  // budget the search stops and keeps the best order found. Counted, not timed, so every machine
+  // draws the same.
+  budget: 6_000_000,
 });
 
 const PERMS = [[[]], [[0]]];
@@ -1324,13 +1330,44 @@ function route(selected, edges, g) {
     return w.k === "out" ? clean : clean.reverse();
   };
 
+  // score() runs thousands of times while a search moves one or two lists between calls, so only a
+  // few wires change shape. Each wire keeps its segments and length, each pair its clashes, and only
+  // the pairs that involve a wire whose points changed are measured again. Same result, far less work.
+  const W = wires.length;
+  let work = 0;
+  const over = () => work > ROUTE.budget;
+  const shape = new Array(W).fill(null), segsOf = new Array(W), lengthOf = new Float64Array(W);
+  const pair = new Float64Array(W * W);
   const score = () => {
-    const segs = wires.map((_, i) => segments(points(i)));
+    work += 17 * W;   // re-pointing a wire costs about as much as 17 pairs of segments compared
+    const moved = [];
+    for (let i = 0; i < W; i++) {
+      const pts = points(i);
+      const k = pts.map(p => p.u + "," + p.v).join(" ");
+      if (k === shape[i]) continue;
+      shape[i] = k;
+      const s = segments(pts);
+      segsOf[i] = s;
+      let len = 0;
+      for (const [p, q] of s) len += Math.abs(p.u - q.u) + Math.abs(p.v - q.v);
+      lengthOf[i] = len;
+      moved.push(i);
+    }
+    if (moved.length) {
+      const isMoved = new Uint8Array(W);
+      for (const i of moved) isMoved[i] = 1;
+      for (let a = 0; a < W; a++) for (let b = a + 1; b < W; b++) {
+        if (!isMoved[a] && !isMoved[b]) continue;
+        work += segsOf[a].length * segsOf[b].length;
+        let c = 0;
+        if (wires[a].h !== wires[b].h) for (const s1 of segsOf[a]) for (const s2 of segsOf[b]) c += clash(s1, s2);
+        pair[a * W + b] = c;
+      }
+    }
     let total = 0, length = 0;
-    for (const s of segs) for (const [p, q] of s) length += Math.abs(p.u - q.u) + Math.abs(p.v - q.v);
-    for (let a = 0; a < segs.length; a++) for (let b = a + 1; b < segs.length; b++) {
-      if (wires[a].h === wires[b].h) continue;
-      for (const s1 of segs[a]) for (const s2 of segs[b]) total += clash(s1, s2);
+    for (let a = 0; a < W; a++) {
+      length += lengthOf[a];
+      for (let b = a + 1; b < W; b++) total += pair[a * W + b];
     }
     return total + length * 1e-5;
   };
@@ -1340,10 +1377,11 @@ function route(selected, edges, g) {
     const baseP = [...P];
     let keepP = [...P], keepC = [...C];
     for (const perm of PERMS[baseP.length]) {
+      if (over()) break;
       perm.forEach((o, q) => { P[q] = baseP[o]; });
-      for (let pass = 0, moved = true; moved && pass < 3; pass++) {
+      for (let pass = 0, moved = true; moved && pass < 3 && !over(); pass++) {
         moved = false;
-        for (let i = 0; i < C.length; i++) {
+        for (let i = 0; i < C.length && !over(); i++) {
           const item = C[i];
           let at = i, s0 = score();
           C.splice(i, 1);
@@ -1377,6 +1415,7 @@ function route(selected, edges, g) {
         return;
       }
       for (const perm of PERMS[bases[j].length]) {
+        if (over()) break;
         const l = lists.get(group[j]);
         perm.forEach((o, q) => { l[q] = bases[j][o]; });
         rec(j + 1);
@@ -1392,7 +1431,7 @@ function route(selected, edges, g) {
     for (let a = 0; a < keys.length; a++) for (let b = a + 1; b < keys.length; b++) {
       if (fact(lists.get(keys[a]).length) * fact(lists.get(keys[b]).length) <= 1500) groups.push([keys[a], keys[b]]);
     }
-    for (let round = 0; round < 6 && best >= 1; round++) {
+    for (let round = 0; round < 6 && best >= 1 && !over(); round++) {
       let any = false;
       for (const grp of groups) any = tryGroup(grp) || any;
       if (!any) break;
@@ -1417,7 +1456,7 @@ function route(selected, edges, g) {
     for (const kp of [...lists.keys()].filter(k => k.startsWith("P" + selected + ":") && lists.get(k).length > 1 && lists.get(k).length <= 6)) {
       const hsOnSide = new Set(lists.get(kp).map(v => v.h));
       const corridors = [...lists.keys()].filter(k => k[0] === "C" && lists.get(k).length > 1 && lists.get(k).some(v => hsOnSide.has(v.h)));
-      for (const kc of corridors) if (best >= 1) tryPortsThenTracks(kp, kc);
+      for (const kc of corridors) if (best >= 1 && !over()) tryPortsThenTracks(kp, kc);
     }
   }
   return {
