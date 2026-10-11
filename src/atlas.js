@@ -884,7 +884,18 @@ export class Atlas extends EventTarget {
     for (const b of this._els.values()) b.tabIndex = -1;
     const b = this._els.get(id);
     b.tabIndex = 0;
-    if (focus && this.root.activeElement !== b) b.focus({ preventScroll: !this._flowMode() ? false : true });
+    if (!focus) return;
+    if (this.root.activeElement !== b) b.focus({ preventScroll: true });
+    this._reveal(b);
+  }
+
+  /** Scrolls a node into view, sideways inside the board too, and above the detail drawer when the
+   *  panel below the board covers the foot of the screen. */
+  _reveal(b) {
+    const drawer = this._wrap.dataset.panel === "below" && !this._panel.hidden;
+    // The drawer is sticky 12px above the bottom; keep the node another 12px clear of it.
+    b.style.scrollMarginBottom = drawer ? `${Math.ceil(this._panel.getBoundingClientRect().height) + 24}px` : "";
+    b.scrollIntoView({ block: "nearest", inline: "nearest", behavior: this.options.animate && !reducedMotion() ? "smooth" : "auto" });
   }
 
   _ordered() {

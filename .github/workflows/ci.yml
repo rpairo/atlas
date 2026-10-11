@@ -75,5 +75,7 @@ jobs:
           for direction in left up down; do
             EXTRA="&direction=$direction" scripts/audit.sh "" 1400 600
           done
+      - name: A short window, where the detail drawer covers the foot of the screen
+        run: HEIGHT=800 scripts/audit.sh "" 1100 500
       - name: The built file, themed from a page with its own variables
         run: EXTRA="&dist=1&hostvars=1" scripts/audit.sh "" 1400 900 500
