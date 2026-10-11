@@ -33,3 +33,24 @@ test("loops to nodes above and below share no track (they would always cross)", 
   const loops = r.wires.filter(w => w.to === "a" || w.to === "c");
   assert.notEqual(loops[0].h, loops[1].h, "each loop is its own bundle");
 });
+
+test("a hub with dozens of wires routes in well under a second, not minutes (search budget)", () => {
+  // One hub in a middle lane, linked both ways to the first and last node of every other lane: 36
+  // wires whose crossings cannot all be avoided, so the search never stops early. Before the budget
+  // this took about 47 s; it now spends at most ROUTE.budget and keeps the best order found.
+  const lanes = 10, hubCol = 7;
+  const L = Array.from({ length: lanes }, (_, i) => ({ id: "l" + i }));
+  const N = [], E = [];
+  for (let i = 0; i < lanes; i++) for (let k = 0; k < 6; k++) N.push({ id: `n${i}_${k}`, lane: "l" + i });
+  N.push({ id: "hub", lane: "l" + hubCol });
+  for (let i = 0; i < lanes; i++) if (i !== hubCol) {
+    E.push({ from: "hub", to: `n${i}_0` }, { from: `n${i}_5`, to: "hub" }, { from: "hub", to: `n${i}_5` }, { from: `n${i}_0`, to: "hub" });
+  }
+  const { model } = load({ meta: { ordered: true }, lanes: L, nodes: N, edges: E });
+  const g = geometry(model);
+  const t0 = performance.now();
+  const r = route("hub", g.edges, g);
+  const ms = performance.now() - t0;
+  assert.equal(r.wires.length, 36);
+  assert.ok(ms < 5000, `route() took ${Math.round(ms)} ms`);
+});

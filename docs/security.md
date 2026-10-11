@@ -12,7 +12,9 @@ file, an API response, another team's repository.
 - **No prototype pollution.** JSON text is parsed without letting `__proto__`, `constructor` or
   `prototype` keys through, and those names are refused as ids.
 - **Bounded work.** Documents over 512 KB and boards over the [limits](board-format.md#limits)
-  are rejected before any placement or routing runs. Placement and routing use bounded iterations.
+  are rejected before any placement or routing runs. Placement uses bounded iterations, and the
+  routing search stops at a fixed amount of work (`ROUTE.budget`), so one selection cannot freeze
+  the page.
 - **Validated edits.** Every edit validates the whole board, and a failing batch leaves it
   untouched.
 - **Same-origin boards.** `<atlas-map src>` refuses boards from another origin unless the element
