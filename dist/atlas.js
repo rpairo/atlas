@@ -248,7 +248,7 @@ function validate(model) {
     text(errors, `${p}.label`, e.label);
     text(errors, `${p}.details`, e.details);
     text(errors, `${p}.type`, e.type);
-    if (typeof e.type === "string" && Object.keys(model.edgeTypes).length && !Object.hasOwn(model.edgeTypes, e.type)) {
+    if (typeof e.type === "string" && Object.keys(model.edgeTypes).length && !Object.prototype.hasOwnProperty.call(model.edgeTypes, e.type)) {
       warnings.push(err(`${p}.type`, "unknown-type", `edge type "${e.type}" is not declared`));
     }
   });
@@ -394,10 +394,12 @@ const APPLY = {
     insertAt(m.lanes, { kind: "flow", ...compact(lane) }, clampIndex(index, m.lanes.length));
   },
   updateLane(m, { id, changes }, p) {
-    const l = find(m.lanes, id, p);
+    const i = indexOf(m.lanes, id, p);
     const { id: _ignored, ...rest } = changes ?? {};
-    assign(l, rest);
-    l.kind ??= "flow";
+    assign(m.lanes[i], rest);
+    // A kind left out falls back to "flow", placed first as normalize() places it: saving twice gives
+    // the same text.
+    if (m.lanes[i].kind == null) m.lanes[i] = { kind: "flow", ...m.lanes[i] };
   },
   moveLane(m, { id, index }, p) {
     const [l] = m.lanes.splice(indexOf(m.lanes, id, p), 1);
@@ -441,7 +443,7 @@ const APPLY = {
   },
   setMeta(m, { changes }) {
     assign(m.meta, changes ?? {});
-    m.meta.direction ??= "right";
+    if (m.meta.direction == null) m.meta = { direction: "right", ...m.meta };
   },
 };
 
@@ -1828,7 +1830,7 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
    selected node beside it, so the detail opens under the pair. */
 /* The detail sits inside the selected node's item; in a two-column band that item takes the whole
    row, or its height would stretch the node beside it. */
-.atlas[data-mode="stack"] .band ol.nodes > li:has(> .panel) { grid-column: 1 / -1 !important; }
+.atlas[data-mode="stack"] .band ol.nodes > li.with-detail { grid-column: 1 / -1 !important; }
 .atlas[data-mode="stack"] svg.wires { display: none; }
 .atlas[data-mode="stack"] .board { gap: 26px !important; width: auto; min-width: 0; }
 .atlas[data-mode="stack"] .group-box { display: none; }
@@ -2481,19 +2483,37 @@ class Atlas extends EventTarget {
   /** Narrowest the board can be laid out side by side, measured once per build: it depends on the
    *  corridors and the lanes, not on the container. */
   _intrinsicWidth() {
-    const wrap = this._wrap, board = this._board, mode = wrap.dataset.mode;
-    wrap.dataset.mode = "flow";
-    board.style.width = "min-content";
-    const w = Math.ceil(board.getBoundingClientRect().width);
-    board.style.width = "";
-    if (mode === undefined) delete wrap.dataset.mode; else wrap.dataset.mode = mode;
+    // Measured on a hidden copy, never on the board itself: setting the live board to min-content
+    // and back left WebKit (Safari) with rows sized for the narrow layout, taller than their content,
+    // until something forced a full layout.
+    const shell = this._wrap.cloneNode(false);
+    shell.dataset.mode = "flow";
+    shell.removeAttribute("data-panel");
+    shell.setAttribute("aria-hidden", "true");
+    shell.style.cssText = "position:absolute;top:0;left:-100000px;visibility:hidden;pointer-events:none;contain:layout style";
+    const probe = this._board.cloneNode(true);
+    probe.removeAttribute("role");
+    probe.style.width = "min-content";
+    const wrap = this._boardWrap.cloneNode(false);
+    wrap.append(probe);
+    shell.append(wrap);
+    this.root.append(shell);
+    const w = Math.ceil(probe.getBoundingClientRect().width);
+    shell.remove();
     return w;
   }
 
   _placePanel() {
     const inline = this._wrap.dataset.panel === "inline";
-    // Inline, the detail goes inside the selected node's <li>: an <ol> holds only <li>s.
-    if (inline && this._selected && this._items.has(this._selected)) this._items.get(this._selected).append(this._panel);
+    // Inline, the detail goes inside the selected node's <li>: an <ol> holds only <li>s. The class
+    // lets that item take a whole row of a two-column band (no :has(), for Firefox before 121).
+    this._detailItem?.classList.remove("with-detail");
+    this._detailItem = null;
+    if (inline && this._selected && this._items.has(this._selected)) {
+      this._detailItem = this._items.get(this._selected);
+      this._detailItem.append(this._panel);
+      this._detailItem.classList.add("with-detail");
+    }
     else if (!inline && this._panel.parentNode !== this._wrap) this._wrap.insertBefore(this._panel, this._status);
     this._panel.hidden = this._selected === null || this._wrap.dataset.panel === "none";
   }

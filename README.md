@@ -100,12 +100,15 @@ TypeScript declarations ship in `types/atlas.d.ts`.
 
 ## Browser support
 
-Atlas needs Custom Elements v1, Shadow DOM, CSS subgrid, `ResizeObserver`, `replaceChildren()`, the Web
-Animations API and SVG `getTotalLength()`. On paper that means Chrome and Edge 117+, Firefox 78+ and Safari 16+
-(from the support tables, not from running Atlas there).
+Atlas needs Custom Elements v1, Shadow DOM, CSS subgrid, container queries, `ResizeObserver`,
+`replaceChildren()`, the Web Animations API and SVG `getTotalLength()`. From the support tables that
+means Chrome and Edge 117+, Firefox 110+ and Safari 16+.
 
-**What has actually been tested:** the automated browser audit runs in headless Chrome only.
-Safari, Firefox and mobile browsers have not been tested yet. Reports are welcome.
+**What is tested:** every pull request runs the browser audit (every node selected, every wire
+checked, edits, keyboard, accessibility and layout invariants, at several widths, in every
+direction, right to left and in a short window) in headless Chrome, and the same audit in Firefox
+and WebKit (Safari's engine) through Playwright. Real Safari, older versions and mobile browsers on
+a device have not been tested; reports are welcome.
 
 ## Contributing
 

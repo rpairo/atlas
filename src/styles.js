@@ -177,7 +177,7 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
    selected node beside it, so the detail opens under the pair. */
 /* The detail sits inside the selected node's item; in a two-column band that item takes the whole
    row, or its height would stretch the node beside it. */
-.atlas[data-mode="stack"] .band ol.nodes > li:has(> .panel) { grid-column: 1 / -1 !important; }
+.atlas[data-mode="stack"] .band ol.nodes > li.with-detail { grid-column: 1 / -1 !important; }
 .atlas[data-mode="stack"] svg.wires { display: none; }
 .atlas[data-mode="stack"] .board { gap: 26px !important; width: auto; min-width: 0; }
 .atlas[data-mode="stack"] .group-box { display: none; }

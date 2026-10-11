@@ -81,3 +81,18 @@ jobs:
         run: HEIGHT=800 scripts/audit.sh "" 1100 500
       - name: The built file, themed from a page with its own variables
         run: EXTRA="&dist=1&hostvars=1" scripts/audit.sh "" 1400 900 500
+
+  other-browsers:
+    name: browser audit (Firefox, WebKit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - name: Playwright with Firefox and WebKit (for this job only; not a dependency of Atlas)
+        run: |
+          npm install --no-save --no-package-lock playwright@1.63.0
+          npx playwright install --with-deps firefox webkit
+      - name: The same audit in Firefox and WebKit
+        run: node scripts/audit-browsers.mjs firefox webkit
