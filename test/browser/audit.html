@@ -17,6 +17,8 @@ try {
   if (q.get("direction")) { const d = JSON.parse(text); d.meta = { ...(d.meta ?? {}), direction: q.get("direction") }; text = JSON.stringify(d); }
   document.body.dataset.stage = "fetched";
   const host = document.getElementById("host");
+  // rtl=1: a right-to-left page; the board's geometry must not mirror under the wires.
+  if (q.get("rtl")) document.documentElement.dir = "rtl";
   // hostvars=1: a page with its own --paper/--sheet/--ink/--rule on :root that themes Atlas with
   // them from the host element (the case that once made a cycle and left the board unpainted).
   if (q.get("hostvars")) {
@@ -213,6 +215,36 @@ try {
   if (dry !== done) res.behaviour.push(`reorderAll counted ${dry} in a dry run and ${done} for real`);
   if ((done === 0) !== (map.rev === revBefore)) res.behaviour.push("reorderAll changed the revision without changing the order, or the reverse");
   if (done) map.undo();
+  // Presentation: dimmed nodes keep readable text, long unbroken text wraps instead of overflowing,
+  // and inline the detail sits inside the selected node's <li> (an <ol> holds only <li>s).
+  try {
+    const rgb = c => (c.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+    const lum = c => { const [r, g, b] = rgb(c).map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+    const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+    map.select(live[0], { focus: false, animate: false });
+    const dim = [...map._els.values()].find(b => !b.matches(".on, .near-in, .near-out"));
+    if (dim) {
+      const t = dim.querySelector(".t"), cs = getComputedStyle(dim);
+      const r = ratio(getComputedStyle(t).color, cs.backgroundColor);
+      if (cs.opacity !== "1" || r < 4.5) res.behaviour.push(`a dimmed node's title has ${r.toFixed(2)}:1 at opacity ${cs.opacity}`);
+    }
+    const laneOf = map._layout.laneOf.get(live[0]);
+    const long = "W".repeat(300);
+    map.addNode({ id: "audit_long", title: long, subtitle: long, details: [long], lane: laneOf === "(unassigned)" ? undefined : laneOf });
+    map.select("audit_long", { focus: false, animate: false });
+    const panel = map.root.querySelector(".panel"), nb = map._els.get("audit_long");
+    if (panel.scrollWidth > panel.clientWidth + 1) res.behaviour.push(`a long title overflows the detail (${panel.scrollWidth} > ${panel.clientWidth})`);
+    if (nb.scrollWidth > nb.clientWidth + 1) res.behaviour.push("a long title overflows its node");
+    if (panel.parentElement?.tagName === "OL") res.behaviour.push("the detail is a child of the lane's <ol>");
+    map.undo();
+    if (laneOf && laneOf !== "(unassigned)") {
+      map.updateLane(laneOf, { title: long });
+      const lt = map.root.querySelector(`[data-lane="${CSS.escape(laneOf)}"] .lane-title`);
+      if (lt && lt.scrollWidth > lt.clientWidth + 1) res.behaviour.push(`a long lane title overflows (${lt.scrollWidth} > ${lt.clientWidth})`);
+      map.undo();
+    }
+    map.select(null, { focus: false });
+  } catch (e) { res.behaviour.push(`presentation check threw ${e.name}: ${e.message}`); }
   // State follows the board: the selection after renaming, removing or replacing what is selected,
   // live state of a removed node, edits that change nothing, and a transition cut by destroy().
   const sel = [];
