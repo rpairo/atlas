@@ -10,7 +10,7 @@ import { firefox, webkit, chromium } from "playwright";
 const REPO = fileURLToPath(new URL("..", import.meta.url));
 const engines = { firefox, webkit, chromium };
 const wanted = process.argv.slice(2).length ? process.argv.slice(2) : ["firefox", "webkit"];
-const KEYS = ["missing", "underNode", "crossings", "close", "shortTip", "outside", "moved", "unpainted", "covered", "stack", "behaviour", "hidden", "loops"];
+const KEYS = ["missing", "underNode", "crossings", "close", "shortTip", "outside", "moved", "unpainted", "covered", "stack", "groups", "behaviour", "hidden", "loops"];
 
 const runs = [];
 for (const b of ["incident-response", "dependencies", "state-machine", "org-chart"]) for (const w of [1400, 900, 500]) runs.push({ board: `../../examples/${b}/board.json`, w });
@@ -18,6 +18,8 @@ for (const d of ["left", "up", "down"]) for (const w of [1400, 600]) runs.push({
 for (const w of [1400, 500]) runs.push({ extra: "&rtl=1", w });
 for (const w of [1100, 500]) runs.push({ w, h: 800 });
 for (const w of [1400, 900, 500]) runs.push({ extra: "&dist=1&hostvars=1", w });
+for (const w of [1400, 900, 500]) runs.push({ board: "../fixtures/groups.json", w });
+for (const d of ["left", "down"]) runs.push({ board: "../fixtures/groups.json", extra: `&direction=${d}`, w: 1400 });
 
 const port = 20000 + Math.floor(Math.random() * 20000);
 const server = spawn("python3", ["-m", "http.server", String(port), "--bind", "127.0.0.1"], { cwd: REPO, stdio: "ignore" });
@@ -34,7 +36,7 @@ try {
       page.on("pageerror", e => errors.push(`pageerror: ${e.message}`));
       page.on("console", m => { if (m.type() === "error") errors.push(`console: ${m.text()}`); });
       const url = `http://127.0.0.1:${port}/test/browser/audit.html?board=${run.board ?? "../../examples/incident-response/board.json"}${run.extra ?? ""}`;
-      const label = `${name} ${run.w}x${run.h ?? 2400} ${run.board ? run.board.split("/")[3] : "incident-response"}${run.extra ?? ""}`;
+      const label = `${name} ${run.w}x${run.h ?? 2400} ${(run.board ?? "incident-response").replace(/^(\.\.\/)+(examples\/)?/, "").replace(/(\/board)?\.json$/, "")}${run.extra ?? ""}`;
       try {
         await page.goto(url);
         await page.waitForSelector("pre#audit", { state: "attached", timeout: 180000 });

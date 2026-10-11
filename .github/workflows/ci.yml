@@ -81,6 +81,12 @@ jobs:
         run: HEIGHT=800 scripts/audit.sh "" 1100 500
       - name: The built file, themed from a page with its own variables
         run: EXTRA="&dist=1&hostvars=1" scripts/audit.sh "" 1400 900 500
+      - name: Nested and titled groups, across and along the flow
+        run: |
+          scripts/audit.sh ../fixtures/groups.json 1400 900 500
+          for direction in left down; do
+            EXTRA="&direction=$direction" scripts/audit.sh ../fixtures/groups.json 1400
+          done
 
   other-browsers:
     name: browser audit (Firefox, WebKit)

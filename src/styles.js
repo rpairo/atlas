@@ -82,14 +82,11 @@ ol.nodes > li > .panel { margin-top: 10px; }
 .band.after .lane-title { order: 2; }
 .flow { display: grid; min-width: 0; position: relative; z-index: 1; }
 .lane { display: grid; min-width: 0; }
-.group-box {
-  position: relative; border: 1px dashed var(--rule); border-radius: calc(var(--radius) + 2px);
-  margin: -6px; pointer-events: none; z-index: 0;
-}
-.group-box > span {
-  position: absolute; top: -9px; left: 10px; max-width: calc(100% - 20px); padding: 0 6px; background: var(--paper);
-  font: 500 11px/1.4 var(--mono); color: var(--ink-2); overflow-wrap: anywhere;
-}
+/* A group: a dashed box behind its nodes and, when titled, a legend in a grid row of its own that
+   the box's top edge runs through (atlas.js sets the rows, margins and nesting insets). */
+.group-box { position: relative; border: 1px dashed var(--rule); border-radius: calc(var(--radius) + 2px); pointer-events: none; z-index: 0; }
+.group-legend { position: relative; z-index: 1; justify-self: start; align-self: start; min-width: 0; max-width: calc(100% - 20px); margin-bottom: -6px; pointer-events: none; }
+.group-legend > span { display: block; padding: 0 6px; background: var(--paper); font: 500 11px/16px var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
 
 /* Nodes */
 .node {
@@ -178,6 +175,6 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .atlas[data-mode="stack"] .band ol.nodes > li.with-detail { grid-column: 1 / -1 !important; }
 .atlas[data-mode="stack"] svg.wires { display: none; }
 .atlas[data-mode="stack"] .board { gap: 26px !important; width: auto; min-width: 0; }
-.atlas[data-mode="stack"] .group-box { display: none; }
+.atlas[data-mode="stack"] .group-box, .atlas[data-mode="stack"] .group-legend { display: none !important; }
 .atlas[data-mode="stack"] .lane-gap { display: none; }
 `;

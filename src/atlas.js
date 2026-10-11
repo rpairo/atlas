@@ -509,8 +509,30 @@ export class Atlas extends EventTarget {
       for (let k = 0; k < N; k++) tracks.push(`var(--g${k})`, "minmax(var(--node-min), 1fr)");
       tracks.push(`var(--g${N})`);
       flow.style.gridTemplateColumns = (reversed ? reverseTracks(tracks) : tracks).join(" ");
-      flow.style.gridTemplateRows = `auto repeat(${rows}, auto)`;
       flow.style.rowGap = "10px";
+    }
+    // Group legends take grid tracks of their own, so a legend never sits on a node or a lane title.
+    // Across the flow (right, left) the rows are shared by every lane: a slot where titled groups
+    // start gets one legend row per group starting there, outer groups first. Down or up, each lane
+    // gets legend rows above its nodes, one per level of nesting.
+    const spansOf = new Map(L.flow.map(l => [l.id, L.groups.filter(s => s.lane === l.id).sort((a, b) => a.from - b.from || a.depth - b.depth)]));
+    const legendAt = new Map();   // span → its legend row (flow right, left: a flow row; down, up: a row of the lane's list)
+    const slotRow = [];
+    if (!vertical) {
+      const starting = new Map();
+      for (const spans of spansOf.values()) {
+        const here = new Map();
+        for (const s of spans) if (s.title) { const k = here.get(s.from) ?? 0; legendAt.set(s, k); here.set(s.from, k + 1); }
+        for (const [slot, n] of here) starting.set(slot, Math.max(starting.get(slot) ?? 0, n));
+      }
+      // Rows of each lane's list, a subgrid of the flow's rows after the lane titles' row.
+      let line = 1;
+      for (let s = 0; s < rows; s++) {
+        for (const [span, k] of legendAt) if (span.from === s) legendAt.set(span, line + k);
+        line += starting.get(s) ?? 0;
+        slotRow[s] = line++;
+      }
+      flow.style.gridTemplateRows = `auto repeat(${line - 1}, auto)`;
     }
     const gutterEls = [];
     for (let k = 0; k <= N; k++) {
@@ -546,22 +568,58 @@ export class Atlas extends EventTarget {
         list.style.gridRow = "2 / -1";
         list.style.gridTemplateRows = "subgrid";
       }
+      const spans = spansOf.get(lane.id);
+      let levels = 0;
+      if (vertical) {
+        // Nested legends go one row lower than the legends of the groups around them.
+        for (const s of spans.filter(x => x.title).sort((a, b) => a.depth - b.depth || a.from - b.from)) {
+          let r = 0;
+          for (const [o, row] of legendAt) if (spans.includes(o) && o.from <= s.to && s.from <= o.to) r = Math.max(r, row);
+          legendAt.set(s, r + 1);
+          levels = Math.max(levels, r + 1);
+        }
+        // The lane's rows are its legend rows and its node row; the title lines up with the nodes.
+        sec.style.gridTemplateRows = `repeat(${levels + 1}, auto)`;
+        sec.style.rowGap = "10px";
+        list.style.gridRow = "1 / -1";
+        list.style.gridTemplateRows = "subgrid";
+        title.style.gridRow = `${levels + 1}`;
+      }
+      const nodeRow = levels + 1;
       for (const id of L.order.get(lane.id)) {
         const li = this._item(id);
-        const slot = L.slots.get(id) + 1;
-        li.style.gridRow = vertical ? "" : `${slot}`;
-        li.style.gridColumn = vertical ? `${slot}` : "";
+        const slot = L.slots.get(id);
+        // Both tracks explicit: a group box takes the lane's cross track over its span, and an item with
+        // only its slot set was auto-placed past the box, into an extra column (or row).
+        li.style.gridRow = vertical ? `${nodeRow}` : `${slotRow[slot]}`;
+        li.style.gridColumn = vertical ? `${slot + 1}` : "1";
         list.append(li);
       }
-      // Group boxes, drawn behind the nodes of their slot span.
-      for (const span of L.groups.filter(s => s.lane === lane.id)) {
-        const box = el("div", "group-box");
-        const label = txt("span", "", span.title);
-        box.append(label);
-        if (vertical) { box.style.gridColumn = `${span.from + 1} / ${span.to + 2}`; box.style.gridRow = "1"; }
-        else { box.style.gridRow = `${span.from + 1} / ${span.to + 2}`; box.style.gridColumn = "1"; }
-        list.prepend(box);
+      // Group boxes, drawn behind the nodes of their slot span, from their legend's row when titled.
+      // Boxes and legends are list items (an <ol> holds only <li>s) hidden from assistive technology.
+      const deco = [];
+      for (const span of spans) {
+        const box = el("li", "group-box");
+        box.setAttribute("aria-hidden", "true");
+        box.dataset.group = span.group;
+        const inset = -6 + 4 * Math.min(span.depth, 3);   // nested boxes sit inside their parents
+        const top = span.title ? legendAt.get(span) : null;
+        // A titled box starts half a legend down, so its top edge runs through the legend.
+        box.style.margin = `${top !== null ? 8 : inset}px ${inset}px ${inset}px`;
+        if (vertical) { box.style.gridColumn = `${span.from + 1} / ${span.to + 2}`; box.style.gridRow = `${top ?? nodeRow} / ${nodeRow + 1}`; }
+        else { box.style.gridRow = `${top ?? slotRow[span.from]} / ${slotRow[span.to] + 1}`; box.style.gridColumn = "1"; }
+        deco.push(box);
+        if (top === null) continue;
+        const legend = el("li", "group-legend");
+        legend.setAttribute("aria-hidden", "true");
+        legend.dataset.group = span.group;
+        legend.append(txt("span", "", span.title));
+        legend.style.marginInlineStart = `${inset + 10}px`;
+        if (vertical) { legend.style.gridColumn = `${span.from + 1} / ${span.to + 2}`; legend.style.gridRow = `${top}`; }
+        else { legend.style.gridRow = `${top}`; legend.style.gridColumn = "1"; }
+        deco.push(legend);
       }
+      list.prepend(...deco);
       sec.append(title, list);
       this._lanes.push(sec);
       flow.append(sec);
