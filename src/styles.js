@@ -175,7 +175,9 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .atlas[data-mode="stack"] .band ol.nodes { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; grid-template-rows: none !important; grid-auto-flow: row dense; }
 /* In a band of two columns the detail takes a whole row; dense placement keeps the neighbour of the
    selected node beside it, so the detail opens under the pair. */
-.atlas[data-mode="stack"] ol.nodes > .panel { grid-column: 1 / -1 !important; }
+/* The detail sits inside the selected node's item; in a two-column band that item takes the whole
+   row, or its height would stretch the node beside it. */
+.atlas[data-mode="stack"] .band ol.nodes > li:has(> .panel) { grid-column: 1 / -1 !important; }
 .atlas[data-mode="stack"] svg.wires { display: none; }
 .atlas[data-mode="stack"] .board { gap: 26px !important; width: auto; min-width: 0; }
 .atlas[data-mode="stack"] .group-box { display: none; }
