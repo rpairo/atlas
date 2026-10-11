@@ -143,3 +143,77 @@ test("renameNode also renames the selected node of meta", () => {
   assert.equal(apply(model, { op: "renameNode", from: "a", to: "z" }).model.meta.selected, "z");
   assert.equal(apply(model, { op: "renameNode", from: "b", to: "y" }).model.meta.selected, "a");
 });
+
+// ---------------------------------------------------------------------------------------------
+// The format agrees with the JSON Schema: what loads is saved valid, what the schema refuses fails.
+
+test("a field set to null is left out: it loads and is saved without null", () => {
+  const { model } = load({
+    meta: { title: null, selected: null },
+    lanes: [{ id: "L", title: null }], groups: [{ id: "G", parent: null }],
+    nodes: [{ id: "a", lane: null, group: null, title: null, subtitle: null }, { id: "b" }],
+    edges: [{ from: "a", to: "b", label: null, type: null }],
+  });
+  assert.ok(!JSON.stringify(serialize(model)).includes("null"));
+  assert.equal(model.nodes[0].lane, undefined);
+});
+
+test("wrong types the schema refuses are errors, not saved back", () => {
+  const base = () => ({ nodes: [{ id: "a" }, { id: "b" }], edges: [{ from: "a", to: "b" }] });
+  const cases = [
+    [b => { b.nodes[0].details = [null]; }, "type"],
+    [b => { b.edges[0].type = 5; }, "type"],
+    [b => { b.edges[0].type = "x".repeat(2001); }, "too-long"],
+    [b => { b.meta = { selected: 5 }; }, "id"],
+    [b => { b.meta = { ordered: "yes" }; }, "type"],
+    [b => { b.meta = { lang: 7 }; }, "type"],
+  ];
+  for (const [mutate, code] of cases) {
+    const b = base(); mutate(b);
+    assert.throws(() => load(b), e => e.name === "AtlasError" && e.errors.some(x => x.code === code), JSON.stringify(b));
+  }
+});
+
+test("lengths are counted in characters, as JSON Schema counts them", () => {
+  assert.doesNotThrow(() => load({ nodes: [{ id: "a", title: "😀".repeat(2000) }] }));
+  assert.throws(() => load({ nodes: [{ id: "a", title: "😀".repeat(2001) }] }), e => e.errors.some(x => x.code === "too-long"));
+});
+
+test("a derived edge id never takes one that another edge has explicitly", () => {
+  const { model } = load({ nodes: [{ id: "a" }, { id: "b" }, { id: "c" }], edges: [{ id: "a->b", from: "a", to: "c" }, { from: "a", to: "b" }] });
+  assert.deepEqual(model.edges.map(e => e.id), ["a->b", "a->b#1"]);
+});
+
+test("an edge type named like an Object member is still reported as undeclared", () => {
+  const { warnings } = load({ edgeTypes: { flow: {} }, nodes: [{ id: "a" }, { id: "b" }], edges: [{ from: "a", to: "b", type: "toString" }] });
+  assert.ok(warnings.some(w => w.code === "unknown-type"));
+});
+
+test("defaults come back when an edit leaves a field undefined or null", () => {
+  const { model } = load({ lanes: [{ id: "L" }], nodes: [{ id: "a", lane: "L" }] });
+  let m = apply(model, { op: "addLane", lane: { id: "M", kind: undefined } }).model;
+  assert.equal(m.lanes[1].kind, "flow");
+  m = apply(m, { op: "updateLane", id: "L", changes: { kind: null } }).model;
+  assert.equal(m.lanes[0].kind, "flow");
+  m = apply(m, { op: "setMeta", changes: { direction: null } }).model;
+  assert.equal(m.meta.direction, "right");
+});
+
+test("a long chain of 'before' constraints is refused with AtlasError, not a stack overflow", () => {
+  const n = 6000;
+  const board = { nodes: Array.from({ length: n }, (_, i) => ({ id: "n" + i })), constraints: Array.from({ length: n - 1 }, (_, i) => ({ type: "before", a: "n" + i, b: "n" + (i + 1) })) };
+  assert.throws(() => load(board), e => e.name === "AtlasError");
+});
+
+test("meta.selected follows the node: removing it forgets it, naming a missing one warns", () => {
+  const { model } = load({ meta: { selected: "a" }, nodes: [{ id: "a" }, { id: "b" }] });
+  assert.equal(apply(model, { op: "removeNode", id: "a" }).model.meta.selected, undefined);
+  const { warnings } = load({ meta: { selected: "ghost" }, nodes: [{ id: "a" }] });
+  assert.ok(warnings.some(w => w.path === "meta.selected" && w.code === "missing"));
+});
+
+test("removing a top-level group leaves its subgroups without a parent, not with null", () => {
+  const { model } = load({ lanes: [{ id: "L" }], groups: [{ id: "G" }, { id: "H", parent: "G" }], nodes: [{ id: "a", lane: "L", group: "H" }] });
+  const m = apply(model, { op: "removeGroup", id: "G" }).model;
+  assert.ok(!("parent" in m.groups[0]));
+});

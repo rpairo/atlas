@@ -45,7 +45,16 @@
         ],
         "properties": {
           "id": {
-            "$ref": "#/$defs/id"
+            "allOf": [
+              {
+                "$ref": "#/$defs/id"
+              },
+              {
+                "not": {
+                  "const": "unassigned"
+                }
+              }
+            ]
           },
           "title": {
             "type": "string",
@@ -148,7 +157,14 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:#>-]{0,140}$"
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:#>-]{0,140}$",
+            "not": {
+              "enum": [
+                "__proto__",
+                "constructor",
+                "prototype"
+              ]
+            }
           },
           "from": {
             "$ref": "#/$defs/id"
@@ -165,7 +181,8 @@
             "maxLength": 2000
           },
           "type": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 2000
           }
         }
       }
