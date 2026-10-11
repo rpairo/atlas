@@ -78,7 +78,10 @@ A **band** runs across the whole flow, before it (`"before"`: controls on top) o
 
 **Without any flow lane**, Atlas draws the lanes from the relations themselves (a layered
 drawing): a node that feeds another goes to an earlier lane. Cycles are broken by a depth-first
-search in document order, and the edge that closes a cycle is drawn as a backward edge.
+search in document order, and the edge that closes a cycle is drawn as a backward edge. Because
+those lanes come from the edges, an edit that adds or removes an edge can move nodes to another
+lane (adding a node that feeds one of the first lane pushes it and what follows it one lane on);
+inside each lane the order is kept. Declare flow lanes when nodes must stay where they are.
 
 **With flow lanes**, every node should declare its lane. A node without one goes to a visible
 *Unassigned* lane at the end, with an `unassigned` warning. Atlas never guesses a lane from the

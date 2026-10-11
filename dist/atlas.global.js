@@ -1,4 +1,4 @@
-/*! Atlas 0.3.1 | MIT | https://github.com/rpairo/atlas */
+/*! Atlas 0.3.2 | MIT | https://github.com/rpairo/atlas */
 (function () {
 "use strict";
 const __modules = {};
@@ -1655,6 +1655,30 @@ function route(selected, edges, g) {
       }
     }
   }
+  // Lists longer than 6 (the ports of a hub, a busy corridor) are too long to try every order:
+  // move each item to its best place, a few passes, while crossings remain and the budget lasts.
+  if (best >= 1) {
+    const long = [...lists.keys()].filter(k => lists.get(k).length > 6);
+    for (let pass = 0, moved = true; moved && pass < 3 && best >= 1 && !over(); pass++) {
+      moved = false;
+      for (const k of long) {
+        const list = lists.get(k);
+        for (let i = 0; i < list.length && best >= 1 && !over(); i++) {
+          const item = list[i];
+          let at = i;
+          list.splice(i, 1);
+          for (let j = 0; j <= list.length; j++) {
+            list.splice(j, 0, item);
+            const s = score();
+            if (s < best - 1e-9) { best = s; at = j; }
+            list.splice(j, 1);
+          }
+          list.splice(at, 0, item);
+          if (at !== i) moved = true;
+        }
+      }
+    }
+  }
   // Still crossings: the ports of a side and the tracks of the corridor next to it decide
   // together. Try every order of the ports and, for each, move every track to its best place.
   if (best >= 1) {
@@ -3241,5 +3265,5 @@ if (typeof customElements !== "undefined") defineElement();
 return { Atlas, AtlasMap, define, FORMAT, LIMITS, AtlasError, parse, normalize, validate, load, apply, serialize, diff, layout, bestInsertion, inversions, route, demand, ROUTE };
 })();
 
-globalThis.Atlas = Object.assign(__modules.index.Atlas, { ...__modules.index, VERSION: "0.3.1" });
+globalThis.Atlas = Object.assign(__modules.index.Atlas, { ...__modules.index, VERSION: "0.3.2" });
 })();

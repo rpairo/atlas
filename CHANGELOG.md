@@ -7,6 +7,25 @@ public API is.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-11
+
+### Fixed
+
+- The routing tests' synthetic geometry drew every node 42 units tall, also in a row made taller by
+  a busy node's ports, while the renderer stretches nodes to their row. It squeezed those ports and
+  reported crossings the real map does not have (24 on one node of a 35-node home map, 0 in Chrome,
+  Firefox and WebKit). Nodes now fill their row, and every example and that map route with no
+  crossing in the tests, as on screen.
+
+### Changed
+
+- Lists of more than six ports or tracks (a hub's side, a busy corridor), too long to try every
+  order, are improved by moving each item to its best place while crossings remain, within
+  `ROUTE.budget`: 14% fewer crossings over a set of hubs and dense random boards, in the same time.
+  Boards that route without crossings are unchanged.
+- The format guide says what edits do to lanes computed from the edges (on boards without flow
+  lanes, a new edge can move nodes to another lane; inside a lane the order is kept).
+
 ## [0.3.1] - 2026-10-11
 
 A second review: the browser audit now also runs in Firefox and WebKit, and property-based tests
@@ -177,7 +196,8 @@ Not published. Fixes found by embedding Atlas in a host page.
 Not published. First version: the `atlas/1` format with validation and edit operations, placement,
 orthogonal routing, the `Atlas` class and the `<atlas-map>` element, single-file builds and tests.
 
-[Unreleased]: https://github.com/rpairo/atlas/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/rpairo/atlas/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/rpairo/atlas/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/rpairo/atlas/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/rpairo/atlas/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/rpairo/atlas/releases/tag/v0.2.0
