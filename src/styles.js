@@ -104,7 +104,7 @@ ol.nodes > li > .panel { margin-top: 10px; }
 /* Nodes outside the selection step back without losing their text: paper instead of sheet, a faint
    border and the secondary ink, which keeps 4.5:1 on the paper (WCAG 1.4.3). Opacity would not. */
 .board.has-selection .node:not(.on, .near-in, .near-out) { background: var(--paper); border-color: var(--grid); }
-.board.has-selection .node:not(.on, .near-in, .near-out) .t { color: var(--ink-2); font-weight: 500; }
+.board.has-selection .node:not(.on, .near-in, .near-out) .t { color: var(--ink-2); }   /* colour only: a lighter weight would rewrap titles and move nodes */
 .node.on { border-color: var(--out); box-shadow: 0 0 0 1.5px var(--out); }
 .node.near-out { border-color: var(--out); }
 .node.near-in { border-color: var(--in); }
