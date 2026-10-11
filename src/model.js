@@ -72,21 +72,25 @@ export function normalize(input) {
   const extra = {};
   for (const [k, v] of Object.entries(doc)) if (!known.has(k) && !FORBIDDEN_KEYS.has(k)) extra[k] = v;
 
-  const meta = { direction: "right", ...(isObject(doc.meta) ? doc.meta : {}) };
-  const lanes = asArray(doc.lanes).map(l => ({ kind: "flow", ...l }));
-  const groups = asArray(doc.groups).map(g => ({ ...g }));
-  const nodes = asArray(doc.nodes).map(n => ({ ...n }));
-  const constraints = asArray(doc.constraints).map(c => ({ ...c }));
+  // A field set to null is a field left out (as in the edit operations), so a board that writes
+  // "lane": null loads, and is saved without it, as the schema wants.
+  const meta = { direction: "right", ...compact(isObject(doc.meta) ? doc.meta : {}) };
+  const lanes = asArray(doc.lanes).map(l => ({ kind: "flow", ...compact(l) }));
+  const groups = asArray(doc.groups).map(g => compact(g));
+  const nodes = asArray(doc.nodes).map(n => compact(n));
+  const constraints = asArray(doc.constraints).map(c => compact(c));
 
-  // Edges without an id get a derived one, stable as long as the edge list keeps its order.
-  const seen = new Map();
+  // Edges without an id get a derived one, stable as long as the edge list keeps its order, and
+  // never one that another edge already has explicitly.
+  const taken = new Set(asArray(doc.edges).map(e => e?.id).filter(id => id !== undefined && id !== null && id !== ""));
   const edges = asArray(doc.edges).map(e => {
-    const edge = { ...e };
-    if (edge.id === undefined || edge.id === null || edge.id === "") {
+    const edge = compact(e);
+    if (edge.id === undefined || edge.id === "") {
       const base = `${edge.from}->${edge.to}`;
-      const n = seen.get(base) ?? 0;
-      seen.set(base, n + 1);
-      edge.id = n === 0 ? base : `${base}#${n}`;
+      let n = 0, id = base;
+      while (taken.has(id)) id = `${base}#${++n}`;
+      taken.add(id);
+      edge.id = id;
     }
     return edge;
   });
@@ -134,6 +138,9 @@ export function validate(model) {
     errors.push(err("meta.direction", "enum", `direction must be one of ${DIRECTIONS.join(", ")}`));
   }
   text(errors, "meta.title", model.meta.title);
+  text(errors, "meta.lang", model.meta.lang);
+  if (model.meta.selected !== undefined) checkId(errors, "meta.selected", model.meta.selected);
+  if (model.meta.ordered !== undefined && typeof model.meta.ordered !== "boolean") errors.push(err("meta.ordered", "type", "ordered must be true or false"));
 
   limit(errors, "lanes", model.lanes.length, LIMITS.lanes);
   limit(errors, "groups", model.groups.length, LIMITS.groups);
@@ -206,7 +213,10 @@ export function validate(model) {
       if (!Array.isArray(n.details)) errors.push(err(`${p}.details`, "type", "details must be a list of texts"));
       else {
         if (n.details.length > LIMITS.details) errors.push(err(`${p}.details`, "too-many", `more than ${LIMITS.details} details`));
-        n.details.forEach((d, j) => text(errors, `${p}.details[${j}]`, d));
+        n.details.forEach((d, j) => {
+          if (typeof d !== "string") errors.push(err(`${p}.details[${j}]`, "type", "expected text"));
+          else text(errors, `${p}.details[${j}]`, d);
+        });
       }
     }
     if (n.lane != null && !lanes.has(n.lane)) errors.push(err(`${p}.lane`, "missing", `lane "${n.lane}" does not exist`));
@@ -234,10 +244,15 @@ export function validate(model) {
     pairs.add(pair);
     text(errors, `${p}.label`, e.label);
     text(errors, `${p}.details`, e.details);
-    if (e.type != null && Object.keys(model.edgeTypes).length && !(e.type in model.edgeTypes)) {
+    text(errors, `${p}.type`, e.type);
+    if (typeof e.type === "string" && Object.keys(model.edgeTypes).length && !Object.hasOwn(model.edgeTypes, e.type)) {
       warnings.push(err(`${p}.type`, "unknown-type", `edge type "${e.type}" is not declared`));
     }
   });
+
+  if (typeof model.meta.selected === "string" && ID.test(model.meta.selected) && !nodes.has(model.meta.selected)) {
+    warnings.push(err("meta.selected", "missing", `node "${model.meta.selected}" does not exist; nothing is selected`));
+  }
 
   // Constraints compile into a partial order per lane; anything unsatisfiable is an error that
   // names the constraints in conflict. Nothing is ever broken silently.
@@ -339,6 +354,7 @@ const APPLY = {
     m.nodes.splice(i, 1);
     m.edges = m.edges.filter(e => e.from !== id && e.to !== id);
     m.constraints = m.constraints.filter(c => c.node !== id && c.a !== id && c.b !== id);
+    if (m.meta.selected === id) delete m.meta.selected;
   },
   renameNode(m, { from, to }, p) {
     find(m.nodes, from, p).id = to;
@@ -372,12 +388,13 @@ const APPLY = {
   },
   addLane(m, { lane, index }, p) {
     need(lane && lane.id, p, "lane with an id is required");
-    insertAt(m.lanes, compact({ kind: "flow", ...lane }), clampIndex(index, m.lanes.length));
+    insertAt(m.lanes, { kind: "flow", ...compact(lane) }, clampIndex(index, m.lanes.length));
   },
   updateLane(m, { id, changes }, p) {
     const l = find(m.lanes, id, p);
     const { id: _ignored, ...rest } = changes ?? {};
     assign(l, rest);
+    l.kind ??= "flow";
   },
   moveLane(m, { id, index }, p) {
     const [l] = m.lanes.splice(indexOf(m.lanes, id, p), 1);
@@ -402,7 +419,10 @@ const APPLY = {
   removeGroup(m, { id }, p) {
     const g = find(m.groups, id, p);
     m.groups = m.groups.filter(x => x.id !== id);
-    for (const x of m.groups) if (x.parent === id) x.parent = g.parent ?? null;
+    for (const x of m.groups) if (x.parent === id) {
+      if (g.parent != null) x.parent = g.parent;
+      else delete x.parent;
+    }
     for (const n of m.nodes) if (n.group === id) {
       if (g.parent != null) n.group = g.parent;
       else delete n.group;
@@ -418,6 +438,7 @@ const APPLY = {
   },
   setMeta(m, { changes }) {
     assign(m.meta, changes ?? {});
+    m.meta.direction ??= "right";
   },
 };
 
@@ -471,25 +492,20 @@ function findCycle(edges) {
     if (!adj.has(a)) adj.set(a, []);
     adj.get(a).push(b);
   }
+  // Depth-first without recursion: a chain of thousands of constraints would overflow the stack.
   const state = new Map();
-  const stack = [];
-  const visit = v => {
-    state.set(v, 1);
-    stack.push(v);
-    for (const w of adj.get(v) ?? []) {
-      if (state.get(w) === 1) return [...stack.slice(stack.indexOf(w)), w];
-      if (!state.has(w)) {
-        const c = visit(w);
-        if (c) return c;
-      }
+  for (const start of adj.keys()) {
+    if (state.has(start)) continue;
+    const path = [start], next = [0];
+    state.set(start, 1);
+    while (path.length) {
+      const v = path[path.length - 1], out = adj.get(v) ?? [];
+      const k = next[next.length - 1]++;
+      if (k >= out.length) { state.set(v, 2); path.pop(); next.pop(); continue; }
+      const w = out[k];
+      if (state.get(w) === 1) return [...path.slice(path.indexOf(w)), w];
+      if (!state.has(w)) { state.set(w, 1); path.push(w); next.push(0); }
     }
-    stack.pop();
-    state.set(v, 2);
-    return null;
-  };
-  for (const v of adj.keys()) if (!state.has(v)) {
-    const c = visit(v);
-    if (c) return c;
   }
   return null;
 }
@@ -505,7 +521,8 @@ function checkId(errors, path, id) {
 function text(errors, path, value) {
   if (value === undefined || value === null) return;
   if (typeof value !== "string") errors.push(err(path, "type", "expected text"));
-  else if (value.length > LIMITS.text) errors.push(err(path, "too-long", `longer than ${LIMITS.text} characters`));
+  // Counted in characters (code points), as JSON Schema's maxLength counts them: an emoji is one.
+  else if (value.length > LIMITS.text && [...value].length > LIMITS.text) errors.push(err(path, "too-long", `longer than ${LIMITS.text} characters`));
 }
 
 function limit(errors, path, n, max) {
@@ -541,9 +558,9 @@ function clampIndex(index, length) {
   return Math.max(0, Math.min(length, index));
 }
 
-/** A copy without undefined values: what JSON would keep. */
+/** A copy without undefined or null values: a field set to null is a field left out. */
 function compact(o) {
-  return Object.fromEntries(Object.entries(o ?? {}).filter(([k, v]) => v !== undefined && !FORBIDDEN_KEYS.has(k)));
+  return Object.fromEntries(Object.entries(isObject(o) ? o : {}).filter(([k, v]) => v !== undefined && v !== null && !FORBIDDEN_KEYS.has(k)));
 }
 
 /** Merges changes; a value of undefined or null removes the field. */

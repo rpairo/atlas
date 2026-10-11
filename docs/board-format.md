@@ -26,6 +26,9 @@ Schema (draft 2020-12) for editors and CI checks.
 
 Only `nodes` is really needed: `{ "nodes": [{ "id": "a" }] }` is a valid board.
 
+A field set to `null` is the same as a field left out: `"lane": null` loads as a node without a
+lane, and Atlas saves the board without the field, so what it saves always passes the schema.
+
 ## Top level
 
 | Field | Type | Default | Meaning |
@@ -185,7 +188,7 @@ break ties between equally good wire routes).
 | Groups | 100, nested up to 6 levels |
 | Constraints | 500 |
 | Details per node | 50 |
-| Any text (title, subtitle, label, detail…) | 2,000 characters |
+| Any text (title, subtitle, label, detail, edge type…) | 2,000 characters (counted as JSON Schema counts them: an emoji is one) |
 
 The same values are exported as `LIMITS`.
 
@@ -208,6 +211,7 @@ is meant for people. Errors make a board unusable; warnings are drawn anyway and
 | `reserved` | error | A lane is called `unassigned`. |
 | `bands` | error | More than one band of a kind. |
 | `missing` | error | A reference to a lane, group or node that does not exist. |
+| `missing` | warning | `meta.selected` names a node that does not exist; nothing is selected. |
 | `cycle` | error | Groups that contain themselves, or `before` constraints in a circle. |
 | `depth` | error | Groups nested deeper than 6. |
 | `conflict` | error | Constraints that cannot all hold. |
