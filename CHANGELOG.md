@@ -7,6 +7,63 @@ public API is.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-11
+
+Fixes from an independent review (every one with a test that failed before) and a few additions.
+
+### Fixed
+
+- A selection that no longer exists no longer crashes the map: loading another board, renaming
+  the selected node, or removing it in `apply()`/`batch()` threw a `TypeError` after the board had
+  already changed. The selection follows a rename and is cleared, with a `select` event, when its
+  node is gone.
+- Selecting a node with dozens of wires froze the page for tens of seconds (a hub with 36 wires
+  took 75 s in Chrome). The search for the order of wires is incremental and stops at a fixed
+  amount of work, `ROUTE.budget`: about 0.3 s at worst. Boards like the examples route exactly as
+  before.
+- On a right-to-left page every wire ran over the nodes. The board stays left to right and each
+  text follows its own direction.
+- Tidying a dense board took seconds (16.6 s for 300 nodes and 1,000 edges in two lanes); it takes
+  milliseconds, with the same result.
+- `<atlas-map>` showed an older board when `src` changed before the previous one arrived, and the
+  events of an inline board fired before code right after the import could listen.
+- Adding a node next to groups could swap existing nodes; `reorderAll()` could move pinned nodes
+  when groups were enforced again.
+- Arrow keys could move the focus to a node off screen or under the detail drawer, and selecting a
+  node near the foot of the screen opened the drawer over it. The view scrolls to keep it visible.
+- Dimmed nodes kept only 2.2:1 text contrast; they keep 4.5:1 or more (WCAG 1.4.3).
+- `destroy()` during a transition left an unhandled rejection; a destroyed `<atlas-map>` stayed
+  empty when inserted again.
+- Live state of a removed node came back on a new node with the same id; focus on a removed node
+  fell out of the map; edits that changed nothing made undo steps.
+- `load(board, { selected: null })` selected `meta.selected`.
+- Long unbroken text overflowed the detail, lane titles and group labels; the inline detail was an
+  invalid child of a list; its bullets were circles.
+- The board format and its JSON Schema disagree no more: a field set to `null` is a field left
+  out, wrong types are errors on both sides, lengths count characters as JSON Schema does, and the
+  schema refuses the ids that `validate()` refuses.
+- A long chain of `before` constraints threw `RangeError`; a derived edge id could repeat an
+  explicit one; an edge type named `toString` was not reported; `null` in `addLane`, `updateLane`
+  and `setMeta` did not fall back to defaults; `removeNode` kept `meta.selected`.
+
+### Added
+
+- `element.ready` (a promise for the board on screen) and `element.error` on `<atlas-map>`;
+  `atlas.destroyed`.
+- `historyLimit` option and `clearHistory()`; `updateGroup()`; `batch()` also offers
+  `updateEdge`, `addLane`, `updateLane`, `addGroup`, `updateGroup`, `addConstraint` and `setMeta`.
+- The detail panel shows an edge's `details`.
+- The board is a region named after `meta.title` (label `board`) and the panel is named (label
+  `detail`).
+- Warnings `group-split` (constraints put other nodes inside a group) and `missing` for a
+  `meta.selected` that names no node.
+- `bestInsertion(model, id, near)`.
+
+### Changed
+
+- Dimmed nodes step back with the paper background and the secondary ink instead of opacity.
+- An inline detail sits inside the selected node's list item.
+
 ## [0.2.0] - 2026-10-11
 
 First public release.
@@ -76,5 +133,6 @@ Not published. Fixes found by embedding Atlas in a host page.
 Not published. First version: the `atlas/1` format with validation and edit operations, placement,
 orthogonal routing, the `Atlas` class and the `<atlas-map>` element, single-file builds and tests.
 
-[Unreleased]: https://github.com/rpairo/atlas/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/rpairo/atlas/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/rpairo/atlas/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/rpairo/atlas/releases/tag/v0.2.0

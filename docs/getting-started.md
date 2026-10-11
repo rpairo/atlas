@@ -20,16 +20,16 @@ Pick a source:
 <script type="module" src="./atlas.js"></script>
 
 <!-- From a CDN, pinned to an exact version -->
-<script type="module" src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.2.0/dist/atlas.js"></script>
+<script type="module" src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.3.0/dist/atlas.js"></script>
 
 <!-- Classic script, no modules -->
-<script src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.2.0/dist/atlas.global.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.3.0/dist/atlas.global.js"></script>
 ```
 
 With npm (from GitHub; Atlas is not on the npm registry):
 
 ```bash
-npm install github:rpairo/atlas#v0.2.0
+npm install github:rpairo/atlas#v0.3.0
 ```
 
 ```js
@@ -43,13 +43,13 @@ ES modules do not load from `file://` URLs. Serve the page over HTTP, for exampl
 
 ### Pin a version
 
-Always load an exact version (`@v0.2.0`, `#v0.2.0`), never a branch. The notes of every
+Always load an exact version (`@v0.3.0`, `#v0.3.0`), never a branch. The notes of every
 [release](https://github.com/rpairo/atlas/releases) list the SHA-384 integrity of each file, so a
 CDN copy can be checked by the browser:
 
 ```html
 <script type="module"
-  src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.2.0/dist/atlas.js"
+  src="https://cdn.jsdelivr.net/gh/rpairo/atlas@v0.3.0/dist/atlas.js"
   integrity="sha384-…from the release notes…"
   crossorigin="anonymous"></script>
 ```
