@@ -49,6 +49,7 @@ export function layout(model, options = {}) {
     after: lanes.after ? { ...lanes.after } : null,
     laneOf: lanes.laneOfNode,
     rank,
+    layers: lanes.layerOf,
     order,
     slots: slots.slot,
     rows: slots.rows,
@@ -179,7 +180,9 @@ function resolveLanes(model) {
     // No flow lanes: layers come from the relations (bands still hold their own nodes).
     mode = "auto";
     const free = model.nodes.filter(n => n.lane == null || (n.lane !== before?.id && n.lane !== after?.id));
-    const layerOf = autoLayers(free.map(n => n.id), model.edges);
+    // Layers saved in the board (Atlas writes them, see withLayers) keep the drawing stable.
+    const hints = new Map(free.filter(n => Number.isInteger(n.layer) && n.layer >= 0).map(n => [n.id, n.layer]));
+    const layerOf = hints.size ? stableLayers(free.map(n => n.id), model.edges, hints) : autoLayers(free.map(n => n.id), model.edges);
     const count = free.length ? Math.max(...layerOf.values()) + 1 : 0;
     for (let k = 0; k < count; k++) flow.push({ id: AUTO + k, title: "", kind: "flow", synthetic: true });
     for (const n of model.nodes) {
@@ -191,6 +194,7 @@ function resolveLanes(model) {
   const all = [...(before ? [before] : []), ...flow, ...(after ? [after] : [])].map(l => ({ id: l.id, title: l.title ?? "", kind: l.kind, synthetic: !!l.synthetic }));
   return {
     mode,
+    layerOf: mode === "auto" ? new Map([...laneOfNode].filter(([, l]) => l.startsWith(AUTO)).map(([id, l]) => [id, Number(l.slice(AUTO.length))])) : new Map(),
     flow,
     before: before ? { id: before.id, title: before.title ?? "", kind: "before" } : null,
     after: after ? { id: after.id, title: after.title ?? "", kind: "after" } : null,
@@ -237,6 +241,151 @@ function autoLayers(ids, edges) {
   };
   for (const id of ids) depth(id);
   return layer;
+}
+
+/**
+ * Layers that keep the ones saved in the board (`hints`, node id → layer) wherever the edges allow.
+ * Only an edge that closes a cycle is drawn backwards: inside each strongly connected component, the
+ * edges that go against the saved order. When an edit makes the saved layers impossible, the nodes
+ * after the conflict are pushed forward, or the ones before it pulled back, whichever moves fewer
+ * nodes; a new node takes the column after its inputs, or a new column between its inputs and its
+ * outputs. Columns left empty disappear. Deterministic, linear in nodes and edges (plus a sort).
+ */
+function stableLayers(ids, edges, hints) {
+  const index = new Map(ids.map((id, i) => [id, i]));
+  // The saved order: by saved layer (a node without one goes with the nearest saved node before it in
+  // the document), then by document order.
+  const key = new Map();
+  let last = 0;
+  for (const id of ids) { if (hints.has(id)) last = hints.get(id); key.set(id, last); }
+  const sigma = new Map([...ids].sort((a, b) => key.get(a) - key.get(b) || index.get(a) - index.get(b)).map((id, i) => [id, i]));
+  const pairs = new Set();
+  const out = new Map(ids.map(id => [id, []]));
+  for (const e of edges) {
+    if (!index.has(e.from) || !index.has(e.to) || e.from === e.to) continue;
+    const k = `${e.from}\u0000${e.to}`;
+    if (pairs.has(k)) continue;
+    pairs.add(k);
+    out.get(e.from).push(e.to);
+  }
+  const scc = components(ids, out);
+  // The acyclic graph to layer: every edge forward, except the cycle-closing ones, reversed.
+  const succ = new Map(ids.map(id => [id, []])), pred = new Map(ids.map(id => [id, []]));
+  for (const [u, vs] of out) for (const v of vs) {
+    const [a, b] = scc.get(u) === scc.get(v) && sigma.get(u) > sigma.get(v) ? [v, u] : [u, v];
+    succ.get(a).push(b);
+    pred.get(b).push(a);
+  }
+  // Fast path: the saved layers already hold (a board saved by Atlas loads exactly as it was).
+  if (ids.every(id => hints.has(id)) && ids.every(u => succ.get(u).every(v => hints.get(u) < hints.get(v)))) return compact(hints);
+  const order = topological(ids, succ, pred, sigma);
+  const push = place(order, pred, succ, hints);
+  const neg = new Map([...hints].map(([id, h]) => [id, -h]));
+  const pulled = place([...order].reverse(), succ, pred, neg);
+  const pull = new Map([...pulled].map(([id, l]) => [id, -l]));
+  const cost = L => {
+    let moved = 0, far = 0;
+    for (const [id, h] of hints) if (L.has(id) && L.get(id) !== h) { moved++; far += Math.abs(L.get(id) - h); }
+    return [moved, far];
+  };
+  const [pm, pf] = cost(push), [qm, qf] = cost(pull);
+  return compact(qm < pm || (qm === pm && qf < pf) ? pull : push);
+}
+
+/**
+ * One pass in topological order: a saved node keeps its layer when it is after all its inputs, else
+ * goes to the column after them; a new node goes to the column after its inputs if that is before
+ * every saved output, else to a new column between (a half step), else after its inputs; a new
+ * node without inputs goes just before the first saved node it feeds.
+ */
+function place(order, pred, succ, hints) {
+  const L = new Map();
+  for (const v of order) {
+    const ps = pred.get(v);
+    const lo = ps.length ? Math.max(...ps.map(p => L.get(p))) : -Infinity;
+    if (hints.has(v)) { L.set(v, hints.get(v) > lo ? hints.get(v) : lo + 1); continue; }
+    const saved = succ.get(v).filter(s => hints.has(s)).map(s => hints.get(s));
+    const hi = saved.length ? Math.min(...saved) : Infinity;
+    if (lo === -Infinity) L.set(v, hi === Infinity ? 0 : hi - 1);
+    else if (lo + 1 < hi) L.set(v, lo + 1);
+    else if (hi > lo) L.set(v, (lo + hi) / 2);
+    else L.set(v, lo + 1);
+  }
+  return L;
+}
+
+/** Kahn's topological order, ready nodes taken in the saved order. */
+function topological(ids, succ, pred, sigma) {
+  const need = new Map(ids.map(id => [id, pred.get(id).length]));
+  const ready = ids.filter(id => need.get(id) === 0).sort((a, b) => sigma.get(a) - sigma.get(b));
+  const out = [];
+  while (ready.length) {
+    const v = ready.shift();
+    out.push(v);
+    for (const w of succ.get(v)) {
+      need.set(w, need.get(w) - 1);
+      if (need.get(w) === 0) {
+        let i = ready.length;
+        while (i > 0 && sigma.get(ready[i - 1]) > sigma.get(w)) i--;
+        ready.splice(i, 0, w);
+      }
+    }
+  }
+  return out;
+}
+
+/** Strongly connected components (Tarjan, iterative): node → component number. */
+function components(ids, out) {
+  const index = new Map(), low = new Map(), comp = new Map(), stack = [], on = new Set();
+  let next = 0, c = 0;
+  for (const root of ids) {
+    if (index.has(root)) continue;
+    const work = [[root, 0]];
+    index.set(root, next); low.set(root, next); next++; stack.push(root); on.add(root);
+    while (work.length) {
+      const top = work[work.length - 1], [v, i] = top, ws = out.get(v);
+      if (i < ws.length) {
+        top[1]++;
+        const w = ws[i];
+        if (!index.has(w)) { index.set(w, next); low.set(w, next); next++; stack.push(w); on.add(w); work.push([w, 0]); }
+        else if (on.has(w)) low.set(v, Math.min(low.get(v), index.get(w)));
+        continue;
+      }
+      work.pop();
+      if (work.length) { const u = work[work.length - 1][0]; low.set(u, Math.min(low.get(u), low.get(v))); }
+      if (low.get(v) === index.get(v)) {
+        let w;
+        do { w = stack.pop(); on.delete(w); comp.set(w, c); } while (w !== v);
+        c++;
+      }
+    }
+  }
+  return comp;
+}
+
+/** Renumbers layers 0, 1, 2… in order: empty columns go, half steps and −1 become columns. */
+function compact(L) {
+  const values = [...new Set(L.values())].sort((a, b) => a - b);
+  const to = new Map(values.map((v, i) => [v, i]));
+  return new Map([...L].map(([id, v]) => [id, to.get(v)]));
+}
+
+/**
+ * The model with each node's computed layer saved in its `layer` field, on a board without flow
+ * lanes (nodes in a band and boards with flow lanes lose the field): loading or editing it later
+ * keeps those layers wherever the edges allow. `L` is `layout(model)`.
+ */
+export function withLayers(model, L) {
+  const auto = L.mode === "auto";
+  let changed = false;
+  const nodes = model.nodes.map(n => {
+    const want = auto && L.layers.has(n.id) ? L.layers.get(n.id) : undefined;
+    if (n.layer === want) return n;
+    changed = true;
+    const { layer: _, ...rest } = n;
+    return want === undefined ? rest : { ...rest, layer: want };
+  });
+  return changed ? { ...model, nodes } : model;
 }
 
 // ---------------------------------------------------------------------------------------------

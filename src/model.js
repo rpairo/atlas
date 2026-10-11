@@ -215,6 +215,7 @@ export function validate(model) {
     text(errors, `${p}.subtitle`, n.subtitle);
     text(errors, `${p}.type`, n.type);
     if (n.pinned !== undefined && typeof n.pinned !== "boolean") errors.push(err(`${p}.pinned`, "type", "pinned must be true or false"));
+    if (n.layer !== undefined && !(Number.isInteger(n.layer) && n.layer >= 0 && n.layer <= LIMITS.nodes)) errors.push(err(`${p}.layer`, "type", `layer must be a whole number from 0 to ${LIMITS.nodes}`));
     if (n.details !== undefined) {
       if (!Array.isArray(n.details)) errors.push(err(`${p}.details`, "type", "details must be a list of texts"));
       else {

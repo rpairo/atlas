@@ -11,7 +11,7 @@
 // HTML, and no CSS value comes from the data.
 
 import * as M from "./model.js";
-import { layout as computeLayout, bestInsertion, inversions } from "./layout.js";
+import { layout as computeLayout, bestInsertion, inversions, withLayers } from "./layout.js";
 import { route, demand, corridorSize, sideSize, ROUTE } from "./route.js";
 import { STYLES } from "./styles.js";
 import { MOTION, planMove, sameShape } from "./motion.js";
@@ -120,11 +120,10 @@ export class Atlas extends EventTarget {
     if (this._destroyed) return this;
     const { model, warnings } = M.load(input);
     const tidy = optimize ?? model.meta.ordered !== true;
-    let m = model;
-    if (tidy) {
-      const L = computeLayout(m, { optimize: true });
-      m = withOrder(m, L);
-    }
+    // Without flow lanes the layers are saved with the board, the ones the order was tidied for:
+    // later edits keep them wherever the edges allow.
+    const L = computeLayout(model, { optimize: tidy });
+    let m = withLayers(tidy ? withOrder(model, L) : model, L);
     m.meta.ordered = true;
     this._model = m;
     this._warnings = warnings;
@@ -202,20 +201,27 @@ export class Atlas extends EventTarget {
    * pairs of nodes would swap. Pinned nodes keep their place.
    */
   reorderAll({ dryRun = false } = {}) {
-    if (this._destroyed) return { swaps: 0 };
+    if (this._destroyed) return { swaps: 0, layers: 0 };
     const now = this._layout ?? computeLayout(this._model);
-    let m = withOrder(this._model, computeLayout(this._model, { optimize: true }), true);
+    // Without flow lanes the layers are computed afresh too (pinned nodes keep theirs): the reset for
+    // the drift that many edits leave.
+    const free = { ...this._model, nodes: this._model.nodes.map(n => { if (n.pinned || n.layer === undefined) return n; const { layer: _, ...rest } = n; return rest; }) };
+    const tidied = computeLayout(free, { optimize: true });
+    let m = withLayers(withOrder(free, tidied, true), tidied);
     // Groups and constraints apply again when the result is drawn. A lane where that would move a
     // pinned node keeps its current order: pinned nodes never move.
     const drawn = computeLayout(m);
     const pinned = new Set(this._model.nodes.filter(n => n.pinned).map(n => n.id));
     const kept = [...now.order].filter(([lane, ids]) => ids.some((id, i) => pinned.has(id) && drawn.order.get(lane)?.[i] !== id)).map(([lane]) => lane);
-    if (kept.length) m = withOrder(this._model, { ...drawn, order: new Map([...drawn.order].map(([lane, ids]) => [lane, kept.includes(lane) ? now.order.get(lane) : ids])) });
-    // Counted on the order that results, after pinned nodes went back to their places.
-    const swaps = inversions(now, computeLayout(m));
-    if (dryRun || swaps === 0) return { swaps };
+    if (kept.length) m = withOrder(m, { ...drawn, order: new Map([...drawn.order].map(([lane, ids]) => [lane, kept.includes(lane) ? now.order.get(lane) : ids])) });
+    // Counted on the result, after pinned nodes went back to their places: pairs of nodes that swap
+    // inside a lane, and nodes that change layer.
+    const after = computeLayout(m);
+    const swaps = inversions(now, after);
+    const layers = [...now.layers].filter(([id, l]) => after.layers.has(id) && after.layers.get(id) !== l).length;
+    if (dryRun || (swaps === 0 && layers === 0)) return { swaps, layers };
     this._commit(this._model, m, this._warnings);
-    return { swaps };
+    return { swaps, layers };
   }
 
   undo() {
@@ -301,6 +307,7 @@ export class Atlas extends EventTarget {
 
   _commit(before, after, warnings) {
     if (this._destroyed) return;
+    after = withLayers(after, computeLayout(after));
     // An edit that changes nothing (same title, empty list of operations) makes no undo step.
     if (after === before || JSON.stringify(M.serialize(after)) === JSON.stringify(M.serialize(before))) return;
     this._history.push(before);
@@ -1255,8 +1262,10 @@ class Batch {
     this.apply([{ op: "addNode", node }, ...edges.map(e => ({ op: "addEdge", edge: e }))]);
     // The document order of every lane becomes its drawn order first (constraints and groups can
     // draw a lane in another order than the document's): a position counted in drawn order then
-    // lands exactly there, and no existing node changes places.
-    this.model = withOrder(this.model, computeLayout(this.model));
+    // lands exactly there, and no existing node changes places. Without flow lanes the new node's
+    // layer is saved too, so the rest of the edit keeps it.
+    const L0 = computeLayout(this.model);
+    this.model = withLayers(withOrder(this.model, L0), L0);
     // Positions are relative to the node's lane, which may be automatic: anchor on a neighbour.
     const L = computeLayout(this.model);
     const peers = L.order.get(L.laneOf.get(node.id)).filter(id => id !== node.id);

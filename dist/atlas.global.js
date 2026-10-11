@@ -220,6 +220,7 @@ function validate(model) {
     text(errors, `${p}.subtitle`, n.subtitle);
     text(errors, `${p}.type`, n.type);
     if (n.pinned !== undefined && typeof n.pinned !== "boolean") errors.push(err(`${p}.pinned`, "type", "pinned must be true or false"));
+    if (n.layer !== undefined && !(Number.isInteger(n.layer) && n.layer >= 0 && n.layer <= LIMITS.nodes)) errors.push(err(`${p}.layer`, "type", `layer must be a whole number from 0 to ${LIMITS.nodes}`));
     if (n.details !== undefined) {
       if (!Array.isArray(n.details)) errors.push(err(`${p}.details`, "type", "details must be a list of texts"));
       else {
@@ -719,6 +720,7 @@ function layout(model, options = {}) {
     after: lanes.after ? { ...lanes.after } : null,
     laneOf: lanes.laneOfNode,
     rank,
+    layers: lanes.layerOf,
     order,
     slots: slots.slot,
     rows: slots.rows,
@@ -849,7 +851,9 @@ function resolveLanes(model) {
     // No flow lanes: layers come from the relations (bands still hold their own nodes).
     mode = "auto";
     const free = model.nodes.filter(n => n.lane == null || (n.lane !== before?.id && n.lane !== after?.id));
-    const layerOf = autoLayers(free.map(n => n.id), model.edges);
+    // Layers saved in the board (Atlas writes them, see withLayers) keep the drawing stable.
+    const hints = new Map(free.filter(n => Number.isInteger(n.layer) && n.layer >= 0).map(n => [n.id, n.layer]));
+    const layerOf = hints.size ? stableLayers(free.map(n => n.id), model.edges, hints) : autoLayers(free.map(n => n.id), model.edges);
     const count = free.length ? Math.max(...layerOf.values()) + 1 : 0;
     for (let k = 0; k < count; k++) flow.push({ id: AUTO + k, title: "", kind: "flow", synthetic: true });
     for (const n of model.nodes) {
@@ -861,6 +865,7 @@ function resolveLanes(model) {
   const all = [...(before ? [before] : []), ...flow, ...(after ? [after] : [])].map(l => ({ id: l.id, title: l.title ?? "", kind: l.kind, synthetic: !!l.synthetic }));
   return {
     mode,
+    layerOf: mode === "auto" ? new Map([...laneOfNode].filter(([, l]) => l.startsWith(AUTO)).map(([id, l]) => [id, Number(l.slice(AUTO.length))])) : new Map(),
     flow,
     before: before ? { id: before.id, title: before.title ?? "", kind: "before" } : null,
     after: after ? { id: after.id, title: after.title ?? "", kind: "after" } : null,
@@ -907,6 +912,151 @@ function autoLayers(ids, edges) {
   };
   for (const id of ids) depth(id);
   return layer;
+}
+
+/**
+ * Layers that keep the ones saved in the board (`hints`, node id → layer) wherever the edges allow.
+ * Only an edge that closes a cycle is drawn backwards: inside each strongly connected component, the
+ * edges that go against the saved order. When an edit makes the saved layers impossible, the nodes
+ * after the conflict are pushed forward, or the ones before it pulled back, whichever moves fewer
+ * nodes; a new node takes the column after its inputs, or a new column between its inputs and its
+ * outputs. Columns left empty disappear. Deterministic, linear in nodes and edges (plus a sort).
+ */
+function stableLayers(ids, edges, hints) {
+  const index = new Map(ids.map((id, i) => [id, i]));
+  // The saved order: by saved layer (a node without one goes with the nearest saved node before it in
+  // the document), then by document order.
+  const key = new Map();
+  let last = 0;
+  for (const id of ids) { if (hints.has(id)) last = hints.get(id); key.set(id, last); }
+  const sigma = new Map([...ids].sort((a, b) => key.get(a) - key.get(b) || index.get(a) - index.get(b)).map((id, i) => [id, i]));
+  const pairs = new Set();
+  const out = new Map(ids.map(id => [id, []]));
+  for (const e of edges) {
+    if (!index.has(e.from) || !index.has(e.to) || e.from === e.to) continue;
+    const k = `${e.from}\u0000${e.to}`;
+    if (pairs.has(k)) continue;
+    pairs.add(k);
+    out.get(e.from).push(e.to);
+  }
+  const scc = components(ids, out);
+  // The acyclic graph to layer: every edge forward, except the cycle-closing ones, reversed.
+  const succ = new Map(ids.map(id => [id, []])), pred = new Map(ids.map(id => [id, []]));
+  for (const [u, vs] of out) for (const v of vs) {
+    const [a, b] = scc.get(u) === scc.get(v) && sigma.get(u) > sigma.get(v) ? [v, u] : [u, v];
+    succ.get(a).push(b);
+    pred.get(b).push(a);
+  }
+  // Fast path: the saved layers already hold (a board saved by Atlas loads exactly as it was).
+  if (ids.every(id => hints.has(id)) && ids.every(u => succ.get(u).every(v => hints.get(u) < hints.get(v)))) return compact(hints);
+  const order = topological(ids, succ, pred, sigma);
+  const push = place(order, pred, succ, hints);
+  const neg = new Map([...hints].map(([id, h]) => [id, -h]));
+  const pulled = place([...order].reverse(), succ, pred, neg);
+  const pull = new Map([...pulled].map(([id, l]) => [id, -l]));
+  const cost = L => {
+    let moved = 0, far = 0;
+    for (const [id, h] of hints) if (L.has(id) && L.get(id) !== h) { moved++; far += Math.abs(L.get(id) - h); }
+    return [moved, far];
+  };
+  const [pm, pf] = cost(push), [qm, qf] = cost(pull);
+  return compact(qm < pm || (qm === pm && qf < pf) ? pull : push);
+}
+
+/**
+ * One pass in topological order: a saved node keeps its layer when it is after all its inputs, else
+ * goes to the column after them; a new node goes to the column after its inputs if that is before
+ * every saved output, else to a new column between (a half step), else after its inputs; a new
+ * node without inputs goes just before the first saved node it feeds.
+ */
+function place(order, pred, succ, hints) {
+  const L = new Map();
+  for (const v of order) {
+    const ps = pred.get(v);
+    const lo = ps.length ? Math.max(...ps.map(p => L.get(p))) : -Infinity;
+    if (hints.has(v)) { L.set(v, hints.get(v) > lo ? hints.get(v) : lo + 1); continue; }
+    const saved = succ.get(v).filter(s => hints.has(s)).map(s => hints.get(s));
+    const hi = saved.length ? Math.min(...saved) : Infinity;
+    if (lo === -Infinity) L.set(v, hi === Infinity ? 0 : hi - 1);
+    else if (lo + 1 < hi) L.set(v, lo + 1);
+    else if (hi > lo) L.set(v, (lo + hi) / 2);
+    else L.set(v, lo + 1);
+  }
+  return L;
+}
+
+/** Kahn's topological order, ready nodes taken in the saved order. */
+function topological(ids, succ, pred, sigma) {
+  const need = new Map(ids.map(id => [id, pred.get(id).length]));
+  const ready = ids.filter(id => need.get(id) === 0).sort((a, b) => sigma.get(a) - sigma.get(b));
+  const out = [];
+  while (ready.length) {
+    const v = ready.shift();
+    out.push(v);
+    for (const w of succ.get(v)) {
+      need.set(w, need.get(w) - 1);
+      if (need.get(w) === 0) {
+        let i = ready.length;
+        while (i > 0 && sigma.get(ready[i - 1]) > sigma.get(w)) i--;
+        ready.splice(i, 0, w);
+      }
+    }
+  }
+  return out;
+}
+
+/** Strongly connected components (Tarjan, iterative): node → component number. */
+function components(ids, out) {
+  const index = new Map(), low = new Map(), comp = new Map(), stack = [], on = new Set();
+  let next = 0, c = 0;
+  for (const root of ids) {
+    if (index.has(root)) continue;
+    const work = [[root, 0]];
+    index.set(root, next); low.set(root, next); next++; stack.push(root); on.add(root);
+    while (work.length) {
+      const top = work[work.length - 1], [v, i] = top, ws = out.get(v);
+      if (i < ws.length) {
+        top[1]++;
+        const w = ws[i];
+        if (!index.has(w)) { index.set(w, next); low.set(w, next); next++; stack.push(w); on.add(w); work.push([w, 0]); }
+        else if (on.has(w)) low.set(v, Math.min(low.get(v), index.get(w)));
+        continue;
+      }
+      work.pop();
+      if (work.length) { const u = work[work.length - 1][0]; low.set(u, Math.min(low.get(u), low.get(v))); }
+      if (low.get(v) === index.get(v)) {
+        let w;
+        do { w = stack.pop(); on.delete(w); comp.set(w, c); } while (w !== v);
+        c++;
+      }
+    }
+  }
+  return comp;
+}
+
+/** Renumbers layers 0, 1, 2… in order: empty columns go, half steps and −1 become columns. */
+function compact(L) {
+  const values = [...new Set(L.values())].sort((a, b) => a - b);
+  const to = new Map(values.map((v, i) => [v, i]));
+  return new Map([...L].map(([id, v]) => [id, to.get(v)]));
+}
+
+/**
+ * The model with each node's computed layer saved in its `layer` field, on a board without flow
+ * lanes (nodes in a band and boards with flow lanes lose the field): loading or editing it later
+ * keeps those layers wherever the edges allow. `L` is `layout(model)`.
+ */
+function withLayers(model, L) {
+  const auto = L.mode === "auto";
+  let changed = false;
+  const nodes = model.nodes.map(n => {
+    const want = auto && L.layers.has(n.id) ? L.layers.get(n.id) : undefined;
+    if (n.layer === want) return n;
+    changed = true;
+    const { layer: _, ...rest } = n;
+    return want === undefined ? rest : { ...rest, layer: want };
+  });
+  return changed ? { ...model, nodes } : model;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1324,7 +1474,7 @@ function lexLess(a, b) {
   return false;
 }
 
-return { layout, bestInsertion, inversions };
+return { layout, bestInsertion, inversions, withLayers };
 })();
 
 __modules.route = (() => {
@@ -2068,7 +2218,7 @@ __modules.atlas = (() => {
 // HTML, and no CSS value comes from the data.
 
 const M = __modules.model;
-const { layout: computeLayout, bestInsertion, inversions } = __modules.layout;
+const { layout: computeLayout, bestInsertion, inversions, withLayers } = __modules.layout;
 const { route, demand, corridorSize, sideSize, ROUTE } = __modules.route;
 const { STYLES } = __modules.styles;
 const { MOTION, planMove, sameShape } = __modules.motion;
@@ -2177,11 +2327,10 @@ class Atlas extends EventTarget {
     if (this._destroyed) return this;
     const { model, warnings } = M.load(input);
     const tidy = optimize ?? model.meta.ordered !== true;
-    let m = model;
-    if (tidy) {
-      const L = computeLayout(m, { optimize: true });
-      m = withOrder(m, L);
-    }
+    // Without flow lanes the layers are saved with the board, the ones the order was tidied for:
+    // later edits keep them wherever the edges allow.
+    const L = computeLayout(model, { optimize: tidy });
+    let m = withLayers(tidy ? withOrder(model, L) : model, L);
     m.meta.ordered = true;
     this._model = m;
     this._warnings = warnings;
@@ -2259,20 +2408,27 @@ class Atlas extends EventTarget {
    * pairs of nodes would swap. Pinned nodes keep their place.
    */
   reorderAll({ dryRun = false } = {}) {
-    if (this._destroyed) return { swaps: 0 };
+    if (this._destroyed) return { swaps: 0, layers: 0 };
     const now = this._layout ?? computeLayout(this._model);
-    let m = withOrder(this._model, computeLayout(this._model, { optimize: true }), true);
+    // Without flow lanes the layers are computed afresh too (pinned nodes keep theirs): the reset for
+    // the drift that many edits leave.
+    const free = { ...this._model, nodes: this._model.nodes.map(n => { if (n.pinned || n.layer === undefined) return n; const { layer: _, ...rest } = n; return rest; }) };
+    const tidied = computeLayout(free, { optimize: true });
+    let m = withLayers(withOrder(free, tidied, true), tidied);
     // Groups and constraints apply again when the result is drawn. A lane where that would move a
     // pinned node keeps its current order: pinned nodes never move.
     const drawn = computeLayout(m);
     const pinned = new Set(this._model.nodes.filter(n => n.pinned).map(n => n.id));
     const kept = [...now.order].filter(([lane, ids]) => ids.some((id, i) => pinned.has(id) && drawn.order.get(lane)?.[i] !== id)).map(([lane]) => lane);
-    if (kept.length) m = withOrder(this._model, { ...drawn, order: new Map([...drawn.order].map(([lane, ids]) => [lane, kept.includes(lane) ? now.order.get(lane) : ids])) });
-    // Counted on the order that results, after pinned nodes went back to their places.
-    const swaps = inversions(now, computeLayout(m));
-    if (dryRun || swaps === 0) return { swaps };
+    if (kept.length) m = withOrder(m, { ...drawn, order: new Map([...drawn.order].map(([lane, ids]) => [lane, kept.includes(lane) ? now.order.get(lane) : ids])) });
+    // Counted on the result, after pinned nodes went back to their places: pairs of nodes that swap
+    // inside a lane, and nodes that change layer.
+    const after = computeLayout(m);
+    const swaps = inversions(now, after);
+    const layers = [...now.layers].filter(([id, l]) => after.layers.has(id) && after.layers.get(id) !== l).length;
+    if (dryRun || (swaps === 0 && layers === 0)) return { swaps, layers };
     this._commit(this._model, m, this._warnings);
-    return { swaps };
+    return { swaps, layers };
   }
 
   undo() {
@@ -2358,6 +2514,7 @@ class Atlas extends EventTarget {
 
   _commit(before, after, warnings) {
     if (this._destroyed) return;
+    after = withLayers(after, computeLayout(after));
     // An edit that changes nothing (same title, empty list of operations) makes no undo step.
     if (after === before || JSON.stringify(M.serialize(after)) === JSON.stringify(M.serialize(before))) return;
     this._history.push(before);
@@ -3312,8 +3469,10 @@ class Batch {
     this.apply([{ op: "addNode", node }, ...edges.map(e => ({ op: "addEdge", edge: e }))]);
     // The document order of every lane becomes its drawn order first (constraints and groups can
     // draw a lane in another order than the document's): a position counted in drawn order then
-    // lands exactly there, and no existing node changes places.
-    this.model = withOrder(this.model, computeLayout(this.model));
+    // lands exactly there, and no existing node changes places. Without flow lanes the new node's
+    // layer is saved too, so the rest of the edit keeps it.
+    const L0 = computeLayout(this.model);
+    this.model = withLayers(withOrder(this.model, L0), L0);
     // Positions are relative to the node's lane, which may be automatic: anchor on a neighbour.
     const L = computeLayout(this.model);
     const peers = L.order.get(L.laneOf.get(node.id)).filter(id => id !== node.id);
@@ -3586,13 +3745,13 @@ __modules.index = (() => {
 const { Atlas } = __modules.atlas;
 const { AtlasMap, define } = __modules.element;
 const { FORMAT, LIMITS, AtlasError, parse, normalize, validate, load, apply, serialize, diff } = __modules.model;
-const { layout, bestInsertion, inversions } = __modules.layout;
+const { layout, bestInsertion, inversions, withLayers } = __modules.layout;
 const { route, demand, ROUTE } = __modules.route;
 
 const { define: defineElement } = __modules.element;
 if (typeof customElements !== "undefined") defineElement();
 
-return { Atlas, AtlasMap, define, FORMAT, LIMITS, AtlasError, parse, normalize, validate, load, apply, serialize, diff, layout, bestInsertion, inversions, route, demand, ROUTE };
+return { Atlas, AtlasMap, define, FORMAT, LIMITS, AtlasError, parse, normalize, validate, load, apply, serialize, diff, layout, bestInsertion, inversions, withLayers, route, demand, ROUTE };
 })();
 
 globalThis.Atlas = Object.assign(__modules.index.Atlas, { ...__modules.index, VERSION: "0.3.2" });

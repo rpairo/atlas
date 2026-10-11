@@ -57,6 +57,12 @@ export interface Node {
   type?: string;
   /** Pinned nodes keep their place in `reorderAll()`. */
   pinned?: boolean;
+  /**
+   * The node's column on a board without flow lanes (a whole number from 0), written by Atlas so
+   * that edits keep the drawing stable; only the order of the numbers matters. Ignored in bands and
+   * on boards with flow lanes.
+   */
+  layer?: number;
   [key: string]: unknown;
 }
 
@@ -300,6 +306,8 @@ export interface Layout {
   laneOf: Map<string, string>;
   /** Lane id → rank along the flow (-1 for the `before` band). */
   rank: Map<string, number>;
+  /** Without flow lanes: node id → its computed layer (column), for nodes outside the bands. Empty otherwise. */
+  layers: Map<string, number>;
   /** Lane id → node ids in drawing order. */
   order: Map<string, string[]>;
   /** Node id → row slot. */
@@ -324,6 +332,12 @@ export declare function bestInsertion(model: Model, nodeId: string, near?: numbe
 
 /** @experimental How many pairs of nodes swap places between two layouts. */
 export declare function inversions(before: Pick<Layout, "order">, after: Pick<Layout, "order">): number;
+/**
+ * @experimental The model with each node's computed layer saved in `layer` (boards without flow
+ * lanes; removed elsewhere), as Atlas saves it after every edit. For code that edits with `apply()`
+ * without an `Atlas`.
+ */
+export declare function withLayers(model: Model, layout: Layout): Model;
 
 /** @experimental A point in flow coordinates: `u` along the flow, `v` across it. */
 export interface FlowPoint {
@@ -563,7 +577,8 @@ export declare class Atlas extends EventTarget {
   unpin(id: string): number;
   setMeta(changes: Changes<Meta>): number;
   /** Reorders every lane for the fewest crossings; pinned nodes keep their place. */
-  reorderAll(options?: { dryRun?: boolean }): { swaps: number };
+  /** `swaps`: pairs of nodes that change places in a lane; `layers`: nodes that change layer (boards without flow lanes). */
+  reorderAll(options?: { dryRun?: boolean }): { swaps: number; layers: number };
   /** `false` when there is nothing to undo. */
   undo(): boolean;
   /** `false` when there is nothing to redo. */

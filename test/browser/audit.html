@@ -21,10 +21,15 @@ try {
   if (q.get("rtl")) document.documentElement.dir = "rtl";
   // hostvars=1: a page with its own --paper/--sheet/--ink/--rule on :root that themes Atlas with
   // them from the host element (the case that once made a cycle and left the board unpainted).
+  // A page with its own light colours says so with theme="light": the colours it does not set keep
+  // Atlas's light defaults even when the system is dark.
   if (q.get("hostvars")) {
     document.documentElement.setAttribute("style", "--paper:#fbf7ef;--sheet:#fffdf8;--ink:#201a10;--rule:#d9cdb8");
     host.setAttribute("style", "--atlas-paper:var(--paper);--atlas-sheet:var(--sheet);--atlas-ink:var(--ink);--atlas-rule:var(--rule)");
+    host.setAttribute("theme", "light");
   }
+  // theme=dark or theme=light: a forced theme, whatever the system's.
+  if (q.get("theme")) host.setAttribute("theme", q.get("theme"));
   const map = new Atlas(host, { document: text, animate: false });
   document.body.dataset.stage = "constructed";
   // Headless Chrome stops producing frames when nothing changes; wait with a timer instead.
@@ -262,7 +267,7 @@ try {
     if (dim) {
       const t = dim.querySelector(".t"), cs = getComputedStyle(dim);
       const r = ratio(getComputedStyle(t).color, cs.backgroundColor);
-      if (cs.opacity !== "1" || r < 4.5) res.behaviour.push(`a dimmed node's title has ${r.toFixed(2)}:1 at opacity ${cs.opacity}`);
+      if (cs.opacity !== "1" || r < 4.5) res.behaviour.push(`a dimmed node's title has ${r.toFixed(2)}:1 at opacity ${cs.opacity} (${getComputedStyle(t).color} on ${cs.backgroundColor}, node ${map._idOf.get(dim)})`);
     }
     // A declared lane (automatic lanes and "unassigned" cannot be named in a node).
     const declared = new Set(map.toJSON().lanes?.map(l => l.id) ?? []);
