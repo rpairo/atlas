@@ -95,11 +95,8 @@ function normalize(input) {
   const edges = asArray(doc.edges).map(e => {
     const edge = compact(e);
     if ((edge.id === undefined || edge.id === "") && typeof edge.from === "string" && typeof edge.to === "string") {
-      const base = `${edge.from}->${edge.to}`;
-      let n = 0, id = base;
-      while (taken.has(id)) id = `${base}#${++n}`;
-      taken.add(id);
-      edge.id = id;
+      edge.id = edgeId(edge, id => taken.has(id));
+      taken.add(edge.id);
     }
     return edge;
   });
@@ -392,9 +389,7 @@ const APPLY = {
     insertAt(m.nodes, compact(node), anchorOr(m, before, after, p) ?? positionIn(m, node.lane ?? null, index));
   },
   updateNode(m, { id, changes }, p) {
-    const n = find(m.nodes, id, p);
-    const { id: _ignored, ...rest } = changes ?? {};
-    assign(n, rest);
+    assign(find(m.nodes, id, p), changes);
   },
   moveNode(m, { id, lane, index, before, after }, p) {
     const i = indexOf(m.nodes, id, p);
@@ -418,10 +413,7 @@ const APPLY = {
       if (e.to === from) e.to = to;
       if (derived) {
         // The same suffix if it is free, or the next free one: never an id another edge has.
-        const base = `${e.from}->${e.to}`;
-        let id = e.id.replace(/^[^#]*/, base), n = 0;
-        while (m.edges.some(x => x !== e && x.id === id)) id = `${base}#${++n}`;
-        e.id = id;
+        e.id = edgeId(e, id => m.edges.some(x => x !== e && x.id === id), e.id.replace(/^[^#]*/, `${e.from}->${e.to}`));
       }
     }
     for (const c of m.constraints) for (const k of ["node", "a", "b"]) if (c[k] === from) c[k] = to;
@@ -430,18 +422,11 @@ const APPLY = {
   addEdge(m, { edge }, p) {
     need(edge && edge.from && edge.to, p, "edge with from and to is required");
     const e = compact(edge);
-    if (!e.id && typeof e.from === "string" && typeof e.to === "string") {
-      const base = `${e.from}->${e.to}`;
-      let n = 0, id = base;
-      while (m.edges.some(x => x.id === id)) id = `${base}#${++n}`;
-      e.id = id;
-    }
+    if (!e.id && typeof e.from === "string" && typeof e.to === "string") e.id = edgeId(e, id => m.edges.some(x => x.id === id));
     m.edges.push(e);
   },
   updateEdge(m, { id, changes }, p) {
-    const e = find(m.edges, id, p);
-    const { id: _ignored, ...rest } = changes ?? {};
-    assign(e, rest);
+    assign(find(m.edges, id, p), changes);
   },
   removeEdge(m, { id }, p) {
     m.edges.splice(indexOf(m.edges, id, p), 1);
@@ -452,8 +437,7 @@ const APPLY = {
   },
   updateLane(m, { id, changes }, p) {
     const i = indexOf(m.lanes, id, p);
-    const { id: _ignored, ...rest } = changes ?? {};
-    assign(m.lanes[i], rest);
+    assign(m.lanes[i], changes);
     // A kind left out falls back to "flow", placed first as normalize() places it: saving twice gives
     // the same text.
     if (m.lanes[i].kind == null) m.lanes[i] = { kind: "flow", ...m.lanes[i] };
@@ -474,9 +458,7 @@ const APPLY = {
     m.groups.push(compact(group));
   },
   updateGroup(m, { id, changes }, p) {
-    const g = find(m.groups, id, p);
-    const { id: _ignored, ...rest } = changes ?? {};
-    assign(g, rest);
+    assign(find(m.groups, id, p), changes);
   },
   removeGroup(m, { id }, p) {
     const g = find(m.groups, id, p);
@@ -641,9 +623,17 @@ function compact(o) {
 }
 
 /** Merges changes; a value of undefined or null removes the field. */
+/** Merges `changes` into `target`: null or undefined removes a field; the id never changes here. */
+/** The derived id of an edge: `first` (by default `from->to`) or, while taken, `from->to#1`, `#2`… */
+function edgeId(e, used, first = `${e.from}->${e.to}`) {
+  let n = 0, id = first;
+  while (used(id)) id = `${e.from}->${e.to}#${++n}`;
+  return id;
+}
+
 function assign(target, changes) {
-  for (const [k, v] of Object.entries(changes)) {
-    if (FORBIDDEN_KEYS.has(k)) continue;
+  for (const [k, v] of Object.entries(changes ?? {})) {
+    if (k === "id" || FORBIDDEN_KEYS.has(k)) continue;
     if (v === undefined || v === null) delete target[k];
     else target[k] = v;
   }
@@ -680,7 +670,7 @@ __modules.layout = (() => {
 // With no flow lanes declared, lanes come from the relations themselves (layered drawing).
 // Pure and deterministic: no DOM, no randomness, bounded iterations.
 
-const { UNASSIGNED, laneOf } = __modules.model;
+const { UNASSIGNED, laneOf, clone } = __modules.model;
 
 const AUTO = "atlas:auto-";
 const SWEEPS = 8;
@@ -691,7 +681,6 @@ const SWEEPS = 8;
  */
 function layout(model, options = {}) {
   const { optimize = false } = options;
-  const nodes = new Map(model.nodes.map(n => [n.id, n]));
   const lanes = resolveLanes(model);
   const rank = new Map();
   if (lanes.before) rank.set(lanes.before.id, -1);
@@ -725,7 +714,7 @@ function layout(model, options = {}) {
     slots: slots.slot,
     rows: slots.rows,
     edgeClass,
-    groups: groupSpans(model, order, slots.slot, nodes),
+    groups: groupSpans(model, order, slots.slot),
     warnings,
   };
 }
@@ -763,10 +752,10 @@ function constraintWarnings(model, lanes, order) {
 
 /** Groups whose members, in some lane, have other nodes between them (constraints put them there). */
 function splitGroups(model, order) {
-  const out = [];
+  const chain = chainOf(model), nodes = new Map(model.nodes.map(n => [n.id, n])), out = [];
   for (const g of model.groups) for (const [lane, ids] of order) {
     const at = [];
-    ids.forEach((id, i) => { if (inGroup(model.nodes.find(n => n.id === id), g.id, model)) at.push(i); });
+    ids.forEach((id, i) => { if (chain(nodes.get(id).group).includes(g.id)) at.push(i); });
     if (at.length > 1 && at[at.length - 1] - at[0] + 1 !== at.length) {
       out.push({ path: "groups", code: "group-split", message: `constraints put other nodes between the members of group "${g.id}" in lane "${lane}"` });
     }
@@ -1119,24 +1108,12 @@ function enforce(ids, c, model) {
 }
 
 function groupBlocks(ids, model) {
-  const groups = new Map(model.groups.map(g => [g.id, g]));
-  const nodes = new Map(model.nodes.map(n => [n.id, n]));
-  const chain = id => {
-    const out = [];
-    let g = nodes.get(id)?.group;
-    const guard = new Set();
-    while (g != null && groups.has(g) && !guard.has(g)) {
-      guard.add(g);
-      out.unshift(g);
-      g = groups.get(g).parent;
-    }
-    return out;
-  };
+  const chain = chainOf(model), nodes = new Map(model.nodes.map(n => [n.id, n]));
   // A tree of blocks keyed by group path; children in order of first appearance.
   const root = { items: [], index: new Map() };
   for (const id of ids) {
     let node = root;
-    for (const g of chain(id)) {
+    for (const g of chain(nodes.get(id)?.group)) {
       if (!node.index.has(g)) {
         const child = { items: [], index: new Map() };
         node.index.set(g, child);
@@ -1272,19 +1249,8 @@ function staysGrouped(ids, i, model) {
 
 /** A function giving each node's chain of groups as a key; nodes with the same key can swap freely. */
 function groupChains(model) {
-  const groups = new Map(model.groups.map(g => [g.id, g]));
-  const nodes = new Map(model.nodes.map(n => [n.id, n]));
-  const memo = new Map();
-  return id => {
-    if (memo.has(id)) return memo.get(id);
-    const out = [];
-    let g = nodes.get(id)?.group;
-    const guard = new Set();
-    while (g != null && groups.has(g) && !guard.has(g)) { guard.add(g); out.push(g); g = groups.get(g).parent; }
-    const key = out.join("\0");
-    memo.set(id, key);
-    return key;
-  };
+  const chain = chainOf(model), nodes = new Map(model.nodes.map(n => [n.id, n]));
+  return id => chain(nodes.get(id)?.group).join("\0");
 }
 
 function orderBand(bandId, lanes, order, adjacency, constraints, model) {
@@ -1362,7 +1328,7 @@ function balance(lanes, order, adjacency) {
     for (const laneId of seq) {
       const ids = order.get(laneId);
       if (ids.length === rows || ids.length === 0) continue;
-      const targets = ids.map(id => medianOf([...adjacency.get(id)].filter(w => slot.has(w) && lanesOf(lanes, w) !== laneId).map(w => slot.get(w))));
+      const targets = ids.map(id => medianOf([...adjacency.get(id)].filter(w => slot.has(w) && lanes.laneOfNode.get(w) !== laneId).map(w => slot.get(w))));
       const result = placeInSlots(ids.length, rows, (k, r) => {
         const t = targets[k];
         return (t === null ? 0 : Math.abs(r - t)) + r * 1e-4;
@@ -1373,10 +1339,6 @@ function balance(lanes, order, adjacency) {
   // Bands: each node takes its index (bands lay out in their own row).
   for (const band of [lanes.before, lanes.after]) if (band) order.get(band.id).forEach((n, i) => slot.set(n, i));
   return { slot, rows };
-}
-
-function lanesOf(lanes, id) {
-  return lanes.laneOfNode.get(id);
 }
 
 /** Strictly increasing slots for n items in R rows minimizing Σ cost(k, r). O(n·R). */
@@ -1414,10 +1376,10 @@ function classifyEdges(model, laneOfNode, rank) {
   return out;
 }
 
-function groupSpans(model, order, slot, nodes) {
-  const spans = [];
+function groupSpans(model, order, slot) {
+  const chain = chainOf(model), spans = [];
   for (const g of model.groups) {
-    const members = model.nodes.filter(n => inGroup(n, g.id, model)).map(n => n.id);
+    const members = model.nodes.filter(n => chain(n.group).includes(g.id)).map(n => n.id);
     if (!members.length) continue;
     const byLane = new Map();
     for (const id of members) {
@@ -1426,28 +1388,23 @@ function groupSpans(model, order, slot, nodes) {
         byLane.get(lane).push(slot.get(id));
       }
     }
-    for (const [lane, ss] of byLane) spans.push({ group: g.id, title: g.title ?? "", lane, from: Math.min(...ss), to: Math.max(...ss), depth: depthOf(g, model) });
+    for (const [lane, ss] of byLane) spans.push({ group: g.id, title: g.title ?? "", lane, from: Math.min(...ss), to: Math.max(...ss), depth: chain(g.id).length - 1 });
   }
   return spans;
 }
 
-function inGroup(node, groupId, model) {
+/** The group `g` and the groups around it, outermost first (a function of `g`, memoized). */
+function chainOf(model) {
   const groups = new Map(model.groups.map(g => [g.id, g]));
-  let g = node.group;
-  const guard = new Set();
-  while (g != null && !guard.has(g)) {
-    if (g === groupId) return true;
-    guard.add(g);
-    g = groups.get(g)?.parent;
-  }
-  return false;
-}
-
-function depthOf(group, model) {
-  const groups = new Map(model.groups.map(g => [g.id, g]));
-  let d = 0, g = group.parent;
-  while (g != null && groups.has(g) && d < 10) { d++; g = groups.get(g).parent; }
-  return d;
+  const memo = new Map();
+  return g => {
+    if (!memo.has(g)) {
+      const out = [], seen = new Set();
+      for (let x = g; x != null && groups.has(x) && !seen.has(x); x = groups.get(x).parent) { seen.add(x); out.unshift(x); }
+      memo.set(g, out);
+    }
+    return memo.get(g);
+  };
 }
 
 function positionsOf(order) {
@@ -1475,7 +1432,37 @@ function lexLess(a, b) {
   return false;
 }
 
-return { layout, bestInsertion, inversions, withLayers };
+/** A model whose node order follows a layout's lane order (the new sketch); with `keepPinned`,
+ *  pinned nodes keep their index inside their lane. */
+function withOrder(model, L, keepPinned = false) {
+  const m = clone(model);
+  const pos = new Map();
+  let k = 0;
+  for (const lane of [L.before, ...L.flow, L.after].filter(Boolean)) for (const id of L.order.get(lane.id)) pos.set(id, k++);
+  const original = new Map(m.nodes.map((n, i) => [n.id, i]));
+  if (keepPinned) {
+    // Pinned nodes keep their index inside their lane.
+    const pinned = new Set(model.nodes.filter(n => n.pinned).map(n => n.id));
+    const byLane = new Map();
+    for (const n of model.nodes) {
+      const lane = L.laneOf.get(n.id);
+      if (!byLane.has(lane)) byLane.set(lane, []);
+      byLane.get(lane).push(n.id);
+    }
+    for (const [lane, before] of byLane) {
+      const after = L.order.get(lane).filter(id => !pinned.has(id));
+      const merged = [];
+      let j = 0;
+      for (const id of before) merged.push(pinned.has(id) ? id : after[j++]);
+      const base = Math.min(...before.map(id => pos.get(id)));
+      merged.forEach((id, i) => pos.set(id, base + i));
+    }
+  }
+  m.nodes.sort((a, b) => (pos.get(a.id) ?? original.get(a.id)) - (pos.get(b.id) ?? original.get(b.id)));
+  return m;
+}
+
+return { layout, bestInsertion, inversions, withLayers, withOrder };
 })();
 
 __modules.route = (() => {
@@ -1505,6 +1492,10 @@ const ROUTE = Object.freeze({
   channelStep: 9,  // distance between tracks in a channel
   portPad: 10,     // closest a port gets to a corner, on the long side of a node
   portStep: 10,    // distance between ports on a side
+  minGutter: 56,   // narrowest corridors: between lanes, at the margins, beside the bands, outside them
+  minOuter: 26,
+  minChannel: 30,
+  minBand: 12,
   minSeparation: 6,
   arrow: 8,
   radius: 7,
@@ -1563,7 +1554,7 @@ function bundles(selected, edges, place, pos, channels) {
     const tp = topology(e.from, e.to, place, pos, channels);
     const k = e.from === selected ? "out" : "in";
     wires.push({
-      id: e.id, ids: e.ids ?? [e.id], from: e.from, to: e.to, k, ...tp,
+      id: e.id, ids: e.ids ?? [e.id], from: e.from, to: e.to, k,
       far: k === "out" ? e.to : e.from,
       sideS: k === "out" ? tp.s : tp.e,
       sideF: k === "out" ? tp.e : tp.s,
@@ -1584,16 +1575,35 @@ function bundles(selected, edges, place, pos, channels) {
   return { wires, bundles: list };
 }
 
+/** Where a node sits for routing: in the band before the flow ("top"), after it ("bot"), or in a
+ *  flow column (`col`). `L` is a layout. */
+function placeOf(L) {
+  const col = new Map(L.flow.map((l, i) => [l.id, i]));
+  return id => {
+    const lane = L.laneOf.get(id);
+    if (L.before && lane === L.before.id) return { kind: "top" };
+    if (L.after && lane === L.after.id) return { kind: "bot" };
+    return { kind: "col", col: col.get(lane) };
+  };
+}
+
 /**
  * How many tracks every corridor and how many ports every node side need, over every possible
- * selection. Sizing corridors for the worst case means selecting a node never moves anything.
+ * selection, from abstract positions (u = column, v = share of the rows; bands above and below).
+ * Sizing corridors for the worst case means selecting a node never moves anything.
  */
-function demand(nodeIds, edges, place, pos, channels) {
+function demand(model, L) {
+  const place = placeOf(L), N = L.flow.length, bandU = new Map();
+  for (const band of [L.before, L.after]) if (band) L.order.get(band.id).forEach((id, i, a) => bandU.set(id, (i + 0.5) / a.length * N - 0.5));
+  const pos = id => {
+    const p = place(id);
+    return p.kind === "col" ? { u: p.col, v: (L.slots.get(id) + 0.5) / L.rows } : { u: bandU.get(id), v: p.kind === "top" ? -0.5 : 1.5 };
+  };
   const tracks = new Map();
   const ports = new Map();
   const bump = (map, key, n) => map.set(key, Math.max(map.get(key) ?? 0, n));
-  for (const id of nodeIds) {
-    const { wires, bundles: bs } = bundles(id, edges, place, pos, channels);
+  for (const { id } of model.nodes) {
+    const { wires, bundles: bs } = bundles(id, model.edges, place, pos, { ct: 0, cb: 1 });
     const perCorridor = new Map();
     const perSide = new Map();
     bs.forEach(b => {
@@ -1607,11 +1617,16 @@ function demand(nodeIds, edges, place, pos, channels) {
   return { tracks, ports };
 }
 
-/** Width a corridor needs for `n` tracks. */
-function corridorSize(n, kind) {
-  const pad = kind === "g" ? ROUTE.gutterPad : ROUTE.channelPad;
-  const step = kind === "g" ? ROUTE.trackStep : ROUTE.channelStep;
-  return n <= 0 ? 0 : 2 * pad + (n - 1) * step + 2;
+/** Widths of the corridors for a demand on `N` flow columns: gutters g[0..N] and channels. */
+function corridorWidths(need, N) {
+  const size = (c, min) => {
+    const n = need.tracks.get(c) ?? 0, g = c[0] === "g";
+    return Math.max(min, n <= 0 ? 0 : 2 * (g ? ROUTE.gutterPad : ROUTE.channelPad) + (n - 1) * (g ? ROUTE.trackStep : ROUTE.channelStep) + 2);
+  };
+  return {
+    g: Array.from({ length: N + 1 }, (_, k) => size("g" + k, k === 0 || k === N ? ROUTE.minOuter : ROUTE.minGutter)),
+    ct: size("ct", ROUTE.minChannel), cb: size("cb", ROUTE.minChannel), ca: size("ca", ROUTE.minBand), cz: size("cz", ROUTE.minBand),
+  };
 }
 
 /** Length a node side needs for `n` ports. */
@@ -1702,7 +1717,7 @@ function route(selected, edges, g) {
       const k = pts.map(p => p.u + "," + p.v).join(" ");
       if (k === shape[i]) continue;
       shape[i] = k;
-      const s = segments(pts);
+      const s = pts.slice(1).map((q, j) => [pts[j], q]);
       segsOf[i] = s;
       let len = 0;
       for (const [p, q] of s) len += Math.abs(p.u - q.u) + Math.abs(p.v - q.v);
@@ -1728,6 +1743,29 @@ function route(selected, edges, g) {
     return total + length * 1e-5;
   };
 
+  // Moves each item of each list to the place where the score is lowest, a few passes while that
+  // helps and the budget lasts (with `clean`, also while crossings remain). Returns the score reached.
+  const improve = (ls, clean) => {
+    let cur = score();
+    const go = () => !over() && (!clean || cur >= 1);
+    for (let pass = 0, moved = true; moved && pass < 3 && go(); pass++) {
+      moved = false;
+      for (const list of ls) for (let i = 0; i < list.length && go(); i++) {
+        const item = list[i];
+        let at = i;
+        list.splice(i, 1);
+        for (let j = 0; j <= list.length; j++) {
+          list.splice(j, 0, item);
+          const s = score();
+          if (s < cur - 1e-9) { cur = s; at = j; }
+          list.splice(j, 1);
+        }
+        list.splice(at, 0, item);
+        if (at !== i) moved = true;
+      }
+    }
+    return cur;
+  };
   const tryPortsThenTracks = (kp, kc) => {
     const P = lists.get(kp), C = lists.get(kc);
     const baseP = [...P];
@@ -1735,23 +1773,7 @@ function route(selected, edges, g) {
     for (const perm of PERMS[baseP.length]) {
       if (over()) break;
       perm.forEach((o, q) => { P[q] = baseP[o]; });
-      for (let pass = 0, moved = true; moved && pass < 3 && !over(); pass++) {
-        moved = false;
-        for (let i = 0; i < C.length && !over(); i++) {
-          const item = C[i];
-          let at = i, s0 = score();
-          C.splice(i, 1);
-          for (let j = 0; j <= C.length; j++) {
-            C.splice(j, 0, item);
-            const s = score();
-            if (s < s0 - 1e-9) { s0 = s; at = j; }
-            C.splice(j, 1);
-          }
-          C.splice(at, 0, item);
-          if (at !== i) moved = true;
-        }
-      }
-      const s = score();
+      const s = improve([C], false);
       if (s < best - 1e-9) { best = s; keepP = [...P]; keepC = [...C]; if (best < 1) break; }
     }
     P.splice(0, P.length, ...keepP);
@@ -1807,29 +1829,8 @@ function route(selected, edges, g) {
     }
   }
   // Lists longer than 6 (the ports of a hub, a busy corridor) are too long to try every order:
-  // move each item to its best place, a few passes, while crossings remain and the budget lasts.
-  if (best >= 1) {
-    const long = [...lists.keys()].filter(k => lists.get(k).length > 6);
-    for (let pass = 0, moved = true; moved && pass < 3 && best >= 1 && !over(); pass++) {
-      moved = false;
-      for (const k of long) {
-        const list = lists.get(k);
-        for (let i = 0; i < list.length && best >= 1 && !over(); i++) {
-          const item = list[i];
-          let at = i;
-          list.splice(i, 1);
-          for (let j = 0; j <= list.length; j++) {
-            list.splice(j, 0, item);
-            const s = score();
-            if (s < best - 1e-9) { best = s; at = j; }
-            list.splice(j, 1);
-          }
-          list.splice(at, 0, item);
-          if (at !== i) moved = true;
-        }
-      }
-    }
-  }
+  // move each item to its best place, while crossings remain and the budget lasts.
+  if (best >= 1) best = improve([...lists.keys()].filter(k => lists.get(k).length > 6).map(k => lists.get(k)), true);
   // Still crossings: the ports of a side and the tracks of the corridor next to it decide
   // together. Try every order of the ports and, for each, move every track to its best place.
   if (best >= 1) {
@@ -1842,7 +1843,6 @@ function route(selected, edges, g) {
   return {
     wires: wires.map((w, i) => ({ id: w.id, ids: w.ids, from: w.from, to: w.to, k: w.k, h: w.h, points: points(i) })),
     crossings: Math.floor(best),
-    lists: g.debug ? [...lists].map(([k, l]) => `${k}:${l.length}`) : undefined,
   };
 }
 
@@ -1865,7 +1865,7 @@ function connected(keys, membersOf) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Geometry helpers (shared with the renderer and the audit)
+// Geometry helpers
 
 /** n positions centred in [a, b], at most `step` apart and at least `pad` from either end. */
 function spread(a, b, n, i, pad, step) {
@@ -1896,12 +1896,6 @@ function simplify(pts) {
   return out;
 }
 
-function segments(pts) {
-  const s = [];
-  for (let j = 0; j < pts.length - 1; j++) s.push([pts[j], pts[j + 1]]);
-  return s;
-}
-
 /** 1 for a crossing, 4 for parallel runs closer than the minimum separation that overlap. */
 function clash(s1, s2) {
   const flat = s => Math.abs(s[0].v - s[1].v) < 0.5;
@@ -1927,7 +1921,18 @@ function mid(c) {
   return (c.a + c.b) / 2;
 }
 
-return { ROUTE, topology, bundles, demand, corridorSize, sideSize, route, spread, simplify, segments, clash };
+/** Parallel edges (same from and to) travel as one wire. */
+function mergeParallel(edges) {
+  const out = new Map();
+  for (const e of edges) {
+    const key = `${e.from}\u0000${e.to}`;
+    if (!out.has(key)) out.set(key, { id: e.id, from: e.from, to: e.to, ids: [] });
+    out.get(key).ids.push(e.id);
+  }
+  return [...out.values()];
+}
+
+return { ROUTE, placeOf, demand, corridorWidths, sideSize, route, mergeParallel };
 })();
 
 __modules.styles = (() => {
@@ -1939,6 +1944,12 @@ __modules.styles = (() => {
 // where the page's own variables are, so `--paper` there would collide with a page that also has
 // `--paper` and sets `--atlas-paper: var(--paper)` (a cycle that leaves both empty). On .atlas
 // they only shadow what is inside, and the same rules work without a shadow root.
+
+// The dark defaults, for the system's dark mode and for theme="dark".
+const DARK = `--paper: var(--atlas-paper, #0c141e); --sheet: var(--atlas-sheet, #132030); --ink: var(--atlas-ink, #e3eaf2);
+  --ink-2: var(--atlas-ink-2, #98a9bd); --rule: var(--atlas-rule, #2a3a4e); --grid: var(--atlas-grid, #152232);
+  --out: var(--atlas-out, #e88d52); --in: var(--atlas-in, #6ea8ec); --shadow: var(--atlas-shadow, rgba(0, 0, 0, .55));
+  --mark: var(--atlas-mark, #3a3112); --mark-dot: var(--atlas-mark-dot, #e0b43a);`;
 
 const STYLES = `
 :host {
@@ -1972,20 +1983,16 @@ const STYLES = `
 }
 @media (prefers-color-scheme: dark) {
   :host(:not([theme="light"])) .atlas, :not([theme="light"]) > .atlas {
-    --paper: var(--atlas-paper, #0c141e); --sheet: var(--atlas-sheet, #132030); --ink: var(--atlas-ink, #e3eaf2);
-    --ink-2: var(--atlas-ink-2, #98a9bd); --rule: var(--atlas-rule, #2a3a4e); --grid: var(--atlas-grid, #152232);
-    --out: var(--atlas-out, #e88d52); --in: var(--atlas-in, #6ea8ec); --shadow: var(--atlas-shadow, rgba(0, 0, 0, .55));
-    --mark: var(--atlas-mark, #3a3112); --mark-dot: var(--atlas-mark-dot, #e0b43a);
+    ${DARK}
   }
 }
 :host([theme="dark"]) .atlas, [theme="dark"] > .atlas {
-  --paper: var(--atlas-paper, #0c141e); --sheet: var(--atlas-sheet, #132030); --ink: var(--atlas-ink, #e3eaf2);
-  --ink-2: var(--atlas-ink-2, #98a9bd); --rule: var(--atlas-rule, #2a3a4e); --grid: var(--atlas-grid, #152232);
-  --out: var(--atlas-out, #e88d52); --in: var(--atlas-in, #6ea8ec); --shadow: var(--atlas-shadow, rgba(0, 0, 0, .55));
-    --mark: var(--atlas-mark, #3a3112); --mark-dot: var(--atlas-mark-dot, #e0b43a);
+  ${DARK}
 }
 @supports (height: 1dvh) { .atlas { --sheet-height: var(--atlas-sheet-height, min(max(42dvh, 280px), 100dvh - 120px)); } }
 *, *::before, *::after { box-sizing: border-box; }
+/* The small labels: lane titles, the detail's lane line, its relation headings and the sheet's counts. */
+:is(.lane-title, .p-lane, .r-title, .p-counts) { font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; }
 [hidden] { display: none !important; }
 button { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -1994,7 +2001,6 @@ button { font: inherit; color: inherit; }
    detail panel when the panel is a drawer that overlaps it, and nothing of Atlas over the page. */
 .atlas { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); align-items: start; isolation: isolate; }
 .atlas[data-panel="side"] { grid-template-columns: minmax(0, 1fr) var(--atlas-panel-width, 300px); }
-.atlas[data-panel="none"] .panel { display: none; }
 
 .board {
   position: relative; display: grid; min-width: 0;
@@ -2017,7 +2023,7 @@ button { font: inherit; color: inherit; }
 
 /* Bands and lanes */
 .lane-title {
-  margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2);
+  margin: 0; color: var(--ink-2);
   display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere;
 }
 .lane-title::after { content: ""; flex: 1; border-top: 1px solid var(--rule); }   /* a border: it prints and survives forced colours */
@@ -2026,7 +2032,6 @@ ol.nodes { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; mi
 ol.nodes > li { min-width: 0; display: grid; }
 ol.nodes > li > .panel { margin-top: 10px; }
 .band { display: grid; gap: 10px; min-width: 0; position: relative; z-index: 1; }
-.band.after .lane-title { order: 2; }
 .flow { display: grid; min-width: 0; position: relative; z-index: 1; }
 .lane { display: grid; min-width: 0; }
 /* A group: a dashed box behind its nodes and, when titled, a legend in a grid row of its own that
@@ -2090,7 +2095,6 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
   grid-template-columns: minmax(0, 1fr);   /* never as wide as a long unbroken title */
 }
 .atlas[data-panel="side"] .panel { position: sticky; top: var(--panel-top); max-height: calc(100vh - 2 * var(--panel-top)); overflow: auto; }
-.atlas[data-panel="below"] .panel { position: static; }
 /* The sheet: sticky at the foot of the window, its head always there, its body only when open. Grid
    rows (not flex) so the body scrolls inside the open sheet in every engine. */
 .atlas[data-panel="sheet"] .panel {
@@ -2107,10 +2111,10 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 }
 .p-toggle:hover { background: color-mix(in srgb, var(--paper) 55%, var(--sheet)); }
 .p-toggle:focus-visible { outline-offset: -2px; }
-.p-toggle .p-lane { flex: none; margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2); }
+.p-toggle .p-lane { flex: none; }
 .p-toggle .p-name { flex: 0 1 auto; min-width: 0; font-size: 1.05rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .p-toggle .p-sub { flex: 1 1 0; min-width: 0; font: 12.5px/1.4 var(--mono); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.p-counts { flex: none; display: flex; gap: 14px; margin-inline-start: auto; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; }
+.p-counts { flex: none; display: flex; gap: 14px; margin-inline-start: auto; }
 .p-counts > span { display: inline-flex; align-items: center; gap: 6px; }
 .p-counts > span::before { content: ""; width: 12px; border-top: 2px solid; }
 .p-counts [data-dir="in"] { color: var(--in); } .p-counts [data-dir="out"] { color: var(--out); }
@@ -2129,13 +2133,13 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 /* Inline (stacked), the detail sits right under its node: its head would repeat the node, so it is
    kept for screen readers only. */
 .atlas[data-panel="inline"] .panel > :is(.p-lane, .p-title, .p-sub) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.panel .p-lane { margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2); }
+.p-lane { margin: 0; color: var(--ink-2); }
 .panel .p-title { margin: 0; font-size: 1.4rem; line-height: 1.2; text-wrap: balance; overflow-wrap: anywhere; }
 .panel .p-sub { margin: 0; font: 12.5px/1.4 var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
 .panel li { overflow-wrap: anywhere; }
 .panel ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; list-style: disc; } /* inline, the panel sits in a lane's list */
 .rel { display: grid; gap: 6px; }
-.rel .r-title { margin: 4px 0 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; display: flex; align-items: center; gap: 8px; }
+.rel .r-title { margin: 4px 0 0; display: flex; align-items: center; gap: 8px; }
 .rel .r-title::before { content: ""; width: 16px; border-top: 2px solid; }
 .rel[data-dir="in"] .r-title { color: var(--in); }
 .rel[data-dir="out"] .r-title { color: var(--out); }
@@ -2176,7 +2180,7 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .atlas[data-mode="stack"] .board > * { grid-column: auto !important; grid-row: auto !important; }
 .atlas[data-mode="stack"] .gutter, .atlas[data-mode="stack"] .channel { display: none; }
 .atlas[data-mode="stack"] .band { grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: none !important; }
-.atlas[data-mode="stack"] .band > * { grid-column: auto !important; grid-row: auto !important; order: 0 !important; }
+.atlas[data-mode="stack"] .band > * { grid-column: auto !important; grid-row: auto !important; }
 .atlas[data-mode="stack"] .band.after .lane-title { order: -1 !important; }
 .atlas[data-mode="stack"] ol.nodes { margin: 0 !important; }
 .atlas[data-mode="stack"] .lane ol.nodes { grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: none !important; }
@@ -2200,13 +2204,11 @@ return { STYLES };
 
 __modules.motion = (() => {
 // Motion planning for edits: pure, so it is tested in Node. The renderer (atlas.js) measures where
-// every node was and where it is now, asks for a plan, and plays it with the Web Animations API.
+// every node was and where it is now, and plays the edit with the Web Animations API.
 //
 // Stages: exit (ghosts of removed nodes fade out) → move → enter (new nodes fade in), each skipped
 // when empty. A move lasts as long as its longest travel needs (longer travel, longer move), never
-// a fixed time, so an edit and its undo take the same time. When many nodes change lane and many
-// change row, the move runs in two parts, along the flow first and then across it (staging, Heer
-// and Robertson 2007), instead of every node cutting diagonally through the others at once.
+// a fixed time, so an edit and its undo take the same time.
 
 const MOTION = {
   exit: 150,                            // ms
@@ -2215,51 +2217,11 @@ const MOTION = {
   enterEase: "cubic-bezier(0,0,0,1)",
   ease: "cubic-bezier(.2,0,0,1)",
   cue: 600,                             // ms: the tint that marks a change under reduced motion
-  splitAt: 3,                           // nodes changing lane, and nodes changing row, to split a move
-  laneShift: 60,                        // px along the flow that count as changing lane (a gutter that
-                                        // widens by a track moves nodes ~11 px: not a lane change)
 };
 
 /** Duration of a move whose longest travel is `d` px: 250 ms at least, 700 ms at most. */
 function moveMs(d) {
   return Math.round(Math.min(700, Math.max(250, 150 + 20 * Math.sqrt(Math.max(0, d)))));
-}
-
-/**
- * Displacement [along, across] the flow of a screen displacement [dx, dy], for a flow direction.
- */
-function toFlow(direction, dx, dy) {
-  switch (direction) {
-    case "left": return [-dx, dy];
-    case "down": return [dy, dx];
-    case "up": return [-dy, dx];
-    default: return [dx, dy];
-  }
-}
-
-/**
- * The plan of a move. `moves` holds, per node that moves, its screen displacement from where it
- * was to where it is now ([dx, dy]). Returns the total duration, the share of it spent along the
- * flow when the move is split (`f`, 1 when it is not), and per node the screen offset it still has
- * after the along-the-flow part (`mid`, or null).
- */
-function planMove(moves, direction) {
-  const flow = moves.map(m => ({ ...m, d: toFlow(direction, m.dx, m.dy) }));
-  const along = flow.filter(m => Math.abs(m.d[0]) >= MOTION.laneShift).length;
-  const across = flow.filter(m => Math.abs(m.d[1]) >= 0.5).length;
-  const split = along >= MOTION.splitAt && across >= MOTION.splitAt;
-  if (!split) {
-    const ms = flow.length ? moveMs(Math.max(...flow.map(m => Math.hypot(m.dx, m.dy)))) : 0;
-    return { ms, f: 1, split: false, moves: flow.map(m => ({ id: m.id, dx: m.dx, dy: m.dy, mid: null })) };
-  }
-  const a = moveMs(Math.max(...flow.map(m => Math.abs(m.d[0]))));
-  const c = moveMs(Math.max(...flow.map(m => Math.abs(m.d[1]))));
-  const vertical = direction === "down" || direction === "up";
-  // After the along part a node is in its new lane and its old row: what is left is the across part.
-  return {
-    ms: a + c, f: a / (a + c), split: true,
-    moves: flow.map(m => ({ id: m.id, dx: m.dx, dy: m.dy, mid: vertical ? [m.dx, 0] : [0, m.dy] })),
-  };
 }
 
 /**
@@ -2269,10 +2231,7 @@ function planMove(moves, direction) {
  */
 function sameShape(a, b) {
   if (!a || !b || a.length !== b.length || a.length < 2) return false;
-  for (let i = 1; i < a.length; i++) {
-    const s = segment(a[i - 1], a[i]), t = segment(b[i - 1], b[i]);
-    if (s !== t) return false;
-  }
+  for (let i = 1; i < a.length; i++) if (segment(a[i - 1], a[i]) !== segment(b[i - 1], b[i])) return false;
   return true;
 }
 
@@ -2284,7 +2243,7 @@ function segment(p, q) {
   return "?";
 }
 
-return { MOTION, moveMs, toFlow, planMove, sameShape };
+return { MOTION, moveMs, sameShape };
 })();
 
 __modules.atlas = (() => {
@@ -2301,17 +2260,14 @@ __modules.atlas = (() => {
 // HTML, and no CSS value comes from the data.
 
 const M = __modules.model;
-const { layout: computeLayout, bestInsertion, inversions, withLayers } = __modules.layout;
-const { route, demand, corridorSize, sideSize, ROUTE } = __modules.route;
+const { layout: computeLayout, bestInsertion, inversions, withLayers, withOrder } = __modules.layout;
+const { route, demand, corridorWidths, placeOf, sideSize, mergeParallel, ROUTE } = __modules.route;
 const { STYLES } = __modules.styles;
-const { MOTION, planMove, sameShape } = __modules.motion;
+const { MOTION, moveMs, sameShape } = __modules.motion;
 
 const NS = "http://www.w3.org/2000/svg";
 const SPEED = 1150;          // px per second: every wire traces at the same speed
 const BUNDLE_STAGGER = 0.09; // seconds between bundles
-const MIN_GUTTER = 56;
-const MIN_CHANNEL = 30;
-const MIN_OUTER = 26;
 const STACK_BELOW = 720;   // px of container under which lanes stack
 const BAND_NODE_MIN = 96;  // px: narrowest a node of a band gets
 const PANEL_GAP = 20;      // px between the board and a side panel (.atlas gap)
@@ -2593,7 +2549,7 @@ class Atlas extends EventTarget {
     const prev = this._history.pop();
     if (!prev) return false;
     this._future.push({ model: this._model, renames: prev.renames });
-    this._swap(prev.model, prev.renames.map(([from, to]) => [to, from]).reverse());
+    this._show(prev.model, M.validate(prev.model).warnings, prev.renames.map(([from, to]) => [to, from]).reverse());
     return true;
   }
   redo() {
@@ -2601,7 +2557,7 @@ class Atlas extends EventTarget {
     const next = this._future.pop();
     if (!next) return false;
     this._history.push({ model: this._model, renames: next.renames });
-    this._swap(next.model, next.renames);
+    this._show(next.model, M.validate(next.model).warnings, next.renames);
     return true;
   }
   /** Forgets every undo and redo step (for example once the board is saved). */
@@ -2625,7 +2581,7 @@ class Atlas extends EventTarget {
     if (this._destroyed) return;
     if (id !== null && !this._els.has(id)) id = null;
     const prev = this._selected;
-    if (id !== prev) this._ring = null;   // keyboard steps belong to one selection
+    if (id !== prev) this._stepping = null;   // keyboard steps belong to one selection
     this._selected = id;
     this._highlight();
     this._fillPanel();
@@ -2675,20 +2631,14 @@ class Atlas extends EventTarget {
     this._history.push({ model: before, renames });
     while (this._history.length > this.options.historyLimit) this._history.shift();
     this._future = [];
-    this._model = after;
-    this._warnings = warnings ?? [];
-    this._rev++;
-    const d = M.diff(before, after);
-    const followed = this._follow(renames);
-    this._render({ animate: true, diff: d });
-    this._emit("change", { rev: this._rev, diff: d, warnings: this.warnings });
-    if (followed) this._emit("select", { id: this._selected });
+    this._show(after, warnings ?? [], renames);
   }
 
-  _swap(model, renames) {
+  /** Puts a new version of the board on screen (an edit, undo or redo) and says so. */
+  _show(model, warnings, renames) {
     const before = this._model;
     this._model = model;
-    this._warnings = M.validate(model).warnings;
+    this._warnings = warnings;
     this._rev++;
     const d = M.diff(before, model);
     const followed = this._follow(renames);
@@ -2790,7 +2740,7 @@ class Atlas extends EventTarget {
       this._placePanel();
       // Wires are drawn again only when the board's geometry changed, not when the page around it
       // did (the detail panel opening below it resizes the host): that would cut a wire being traced.
-      if (!this._moving() && this._geometryKey() !== this._painted) this._paint(false);
+      if (!this._moving() && this._geometryKey() !== this._paintedKey) this._paint(false);
     });
   }
 
@@ -2817,7 +2767,7 @@ class Atlas extends EventTarget {
     // The selection follows the board: a node that is gone (removed, renamed by undo, another board
     // loaded) is no longer selected, and listeners hear it.
     const lost = this._selected !== null && !this._model.nodes.some(n => n.id === this._selected);
-    if (lost) { this._selected = null; this._ring = null; }
+    if (lost) { this._selected = null; this._stepping = null; }
     // Marks leave with their nodes, and keep reading order.
     const present = new Set(this._model.nodes.map(n => n.id));
     if (this._marks.some(x => !present.has(x))) this._marks = this._marks.filter(x => present.has(x));
@@ -2833,10 +2783,7 @@ class Atlas extends EventTarget {
 
     const L = computeLayout(this._model);
     this._layout = L;
-    const geo = this._abstractGeometry(L);
-    const need = demand(this._model.nodes.map(n => n.id), this._model.edges, geo.place, geo.pos, { ct: 0, cb: 1 });
-    this._need = need;
-    this._build(L, need);
+    this._build(L, demand(this._model, L));
     this._minWidth = this._intrinsicWidth();
     this._rowsWidth = this._board.getBoundingClientRect().width;   // the width its rows were sized at
     this._applyMode();
@@ -2868,21 +2815,6 @@ class Atlas extends EventTarget {
     return a ?? null;
   }
 
-  /** Abstract positions (before measuring) used to size corridors: u = lane, v = slot. */
-  _abstractGeometry(L) {
-    const N = L.flow.length;
-    const bandIndex = new Map();
-    for (const band of [L.before, L.after]) if (band) L.order.get(band.id).forEach((id, i, a) => bandIndex.set(id, (i + 0.5) / a.length * N));
-    const place = placeOf(L);
-    const pos = id => {
-      const p = place(id);
-      if (p.kind === "top") return { u: bandIndex.get(id) - 0.5, v: -0.5 };
-      if (p.kind === "bot") return { u: bandIndex.get(id) - 0.5, v: 1.5 };
-      return { u: p.col, v: (L.slots.get(id) + 0.5) / L.rows };
-    };
-    return { place, pos };
-  }
-
   _build(L, need) {
     const dir = L.direction;
     const vertical = dir === "down" || dir === "up";
@@ -2894,11 +2826,9 @@ class Atlas extends EventTarget {
     const keep = new Set(this._model.nodes.map(n => n.id));
     for (const [id, li] of this._items) if (!keep.has(id)) { li.remove(); this._items.delete(id); this._els.delete(id); this._live.delete(id); }
 
-    const size = (c, min) => Math.max(min, corridorSize(need.tracks.get(c) ?? 0, c[0] === "g" ? "g" : "c"));
-    const gutters = Array.from({ length: N + 1 }, (_, k) => size("g" + k, k === 0 || k === N ? MIN_OUTER : MIN_GUTTER));
-    const ch = { ct: size("ct", MIN_CHANNEL), cb: size("cb", MIN_CHANNEL), ca: size("ca", 12), cz: size("cz", 12) };
-    for (let k = 0; k <= N; k++) board.style.setProperty(`--g${k}`, `${gutters[k]}px`);
-    for (const [k, v] of Object.entries(ch)) board.style.setProperty(`--${k}`, `${v}px`);
+    const widths = corridorWidths(need, N);
+    widths.g.forEach((w, k) => board.style.setProperty(`--g${k}`, `${w}px`));
+    for (const k of ["ct", "cb", "ca", "cz"]) board.style.setProperty(`--${k}`, `${widths[k]}px`);
 
     // Board: before band, channel, flow, channel, after band, stacked across the flow.
     const parts = [];
@@ -2988,7 +2918,6 @@ class Atlas extends EventTarget {
       flow.append(g);
     }
     this._gutters = gutterEls;
-    this._lanes = [];
     L.flow.forEach((lane, k) => {
       const sec = el("section", "lane");
       sec.dataset.lane = lane.id;
@@ -3067,7 +2996,6 @@ class Atlas extends EventTarget {
       }
       list.prepend(...deco);
       sec.append(title, list);
-      this._lanes.push(sec);
       flow.append(sec);
     });
     parts.push(flow);
@@ -3085,11 +3013,11 @@ class Atlas extends EventTarget {
     }
     board.replaceChildren(this._svg, this._ghosts, ...parts);
 
-    // Ports need room: a node is at least as long as its busiest side requires.
+    // Ports need room: a node is at least as long as its busiest side (the ones facing the gutters,
+    // left and right in the flow: tall nodes across, wide nodes down or up) requires.
     for (const n of this._model.nodes) {
       const b = this._els.get(n.id);
-      const sides = vertical ? ["T", "B"] : ["L", "R"];
-      const len = Math.max(...sides.map(s => sideSize(need.ports.get(`${n.id}:${s}`) ?? 0)));
+      const len = Math.max(...["L", "R"].map(s => sideSize(need.ports.get(`${n.id}:${s}`) ?? 0)));
       b.style.minHeight = !vertical && len ? `${len}px` : "";
       b.style.minWidth = vertical && len ? `${len}px` : "";
       this._fillNode(n, b);
@@ -3158,7 +3086,7 @@ class Atlas extends EventTarget {
     if (!this._minWidth) this._minWidth = this._intrinsicWidth();
     const vertical = L.direction === "down" || L.direction === "up";
     const lanes = vertical ? Math.max(1, L.rows) : Math.max(1, L.flow.length);
-    const needed = this._minWidth || lanes * (vertical ? 130 : 150) + (lanes + 1) * MIN_GUTTER + 40;
+    const needed = this._minWidth || lanes * (vertical ? 130 : 150) + (lanes + 1) * ROUTE.minGutter + 40;
     const side = (parseFloat(getComputedStyle(this._wrap).getPropertyValue("--atlas-panel-width")) || 300) + PANEL_GAP;
     // Wires need the lanes side by side. When they do not fit, the board scrolls sideways inside
     // its box; only a really narrow container stacks the lanes.
@@ -3252,7 +3180,7 @@ class Atlas extends EventTarget {
 
   _highlight() {
     const id = this._selected;
-    const star = id === null ? null : this._star(id);
+    const star = id === null ? null : this._neighbours(id);
     const ins = new Set(star?.in.map(x => x.id)), outs = new Set(star?.out.map(x => x.id));
     const marks = new Set(this._marks);
     for (const [nid, b] of this._els) {
@@ -3272,7 +3200,7 @@ class Atlas extends EventTarget {
   }
 
   /** The selected node's neighbours, each once, in reading order: { in, out, all, self }. */
-  _star(hub) {
+  _neighbours(hub) {
     const rank = new Map(this._ordered().map((id, i) => [id, i]));
     const group = dir => {
       const by = new Map();
@@ -3297,7 +3225,7 @@ class Atlas extends EventTarget {
     const texts = new Map();
     const hub = this._selected;
     if (hub !== null && this._els.has(hub)) {
-      const s = this._star(hub), name = this._title(hub);
+      const s = this._neighbours(hub), name = this._title(hub);
       const say = (x, i, list, template) => {
         const what = x.edges.flatMap(e => [e.label, e.details]).filter(t => typeof t === "string" && t).join(", ");
         const t = fill(template, { n: i + 1, total: list.length, hub: name }) + (what ? `: ${what}` : "");
@@ -3328,20 +3256,20 @@ class Atlas extends EventTarget {
   /** The next connection of the selection in `group` ("all", "in", "out"), from the focused node.
    *  A node reached some other way first becomes the selection. Null when there is none. */
   _step(focused, group, delta) {
-    const r = this._ring;
+    const r = this._stepping;
     if (!(r && r.hub === this._selected && (focused === r.hub || focused === r.at?.id))) {
       if (this._selected !== focused) this.select(focused, { focus: false });
-      this._ring = { hub: focused, at: null };
+      this._stepping = { hub: focused, at: null };
     }
-    const { hub, at } = this._ring;
-    const list = this._star(hub)[group];
+    const { hub, at } = this._stepping;
+    const list = this._neighbours(hub)[group];
     if (!list.length) {
       this._announce(fill(this.labels[{ in: "noneIn", out: "noneOut", all: "noneAll" }[group]], { hub: this._title(hub) }));
       return null;
     }
     const i = at?.id === focused ? list.findIndex(x => x.id === at.id && x.dir === at.dir) : -1;
     const j = i < 0 ? (delta > 0 ? 0 : list.length - 1) : (i + delta + list.length) % list.length;
-    this._ring.at = list[j];
+    this._stepping.at = list[j];
     return list[j].id;
   }
 
@@ -3363,7 +3291,7 @@ class Atlas extends EventTarget {
     }
     // One button per other node, in reading order (the summary counts them, the keyboard steps
     // through them in this order); parallel edges join their labels and details.
-    const star = this._star(id);
+    const star = this._neighbours(id);
     for (const dir of ["in", "out"]) {
       if (!star[dir].length) continue;
       const box = el("div", "rel");
@@ -3451,7 +3379,7 @@ class Atlas extends EventTarget {
 
   /** "Triage: 5 incoming, 2 outgoing" (other nodes, each counted once), and the self-loop if any. */
   _summary(id) {
-    const s = this._star(id), title = this._title(id), L = this.labels;
+    const s = this._neighbours(id), title = this._title(id), L = this.labels;
     const text = L.summary
       ? fill(L.summary, { title, incoming: s.in.length, outgoing: s.out.length })
       : `${title}: ${s.in.length} ${L.incoming.toLowerCase()}, ${s.out.length} ${L.outgoing.toLowerCase()}`;
@@ -3533,7 +3461,7 @@ class Atlas extends EventTarget {
    * or holds their key: bundle by bundle, at one speed, the inputs of a bundle timed to arrive together.
    */
   _draw(r, trace = null) {
-    this._painted = this._geometryKey(r?.W, r?.H);
+    this._paintedKey = this._geometryKey(r?.W, r?.H);
     const old = this._wireEls;
     const next = new Map();
     this._wires = r ? r.wires : [];
@@ -3640,7 +3568,7 @@ class Atlas extends EventTarget {
       return;
     }
 
-    const plan = planMove(moves, this._layout.direction);
+    const nodesMs = moves.length ? moveMs(Math.max(...moves.map(m => Math.hypot(m.dx, m.dy)))) : 0;
     const decorMoves = [], decorNew = [];
     for (const [e, z] of decor) {
       const a = first.decor.get(e.dataset.key);
@@ -3649,12 +3577,12 @@ class Atlas extends EventTarget {
       if (Math.abs(dx) >= 0.5 || Math.abs(dy) >= 0.5) decorMoves.push({ e, dx, dy });
     }
     // Titles and boxes keep the timing of the nodes; alone, they take the time their own travel needs.
-    const moveMs = plan.ms || (decorMoves.length ? planMove(decorMoves.map(m => ({ id: "", dx: m.dx, dy: m.dy })), this._layout.direction).ms : 0);
+    const ms = nodesMs || (decorMoves.length ? moveMs(Math.max(...decorMoves.map(m => Math.hypot(m.dx, m.dy)))) : 0);
 
     // The wires: unchanged ones stay, ones that keep their shape reshape with the nodes, the rest fade
     // out and trace again at the end. Wires already reshaping when this edit came all fade.
     const old = this._wireEls;
-    const morph = MORPH && !plan.split && !first.moving && moveMs > 0;
+    const morph = MORPH && !first.moving && ms > 0;
     const reshape = [], fade = [], trace = new Set();
     const seen = new Set();
     for (const w of r?.wires ?? []) {
@@ -3683,16 +3611,12 @@ class Atlas extends EventTarget {
     for (const o of fade) for (const e of o.els) anims.push(e.animate([{ opacity: 1 }, { opacity: 0 }], { duration: MOTION.exit, easing: MOTION.exitEase, fill: "forwards" }));
     if (removed.length || fade.length) t = MOTION.exit;
 
-    // Move: every node, title and box from where it was seen, all at once (or along the flow, then
-    // across it), for as long as the longest travel needs.
+    // Move: every node, title and box from where it was seen, all at once, for as long as the
+    // longest travel needs.
     const offset = (dx, dy) => `translate(${dx}px, ${dy}px)`;
-    const frames = (dx, dy, mid) => mid
-      ? [{ transform: offset(dx, dy), easing: MOTION.ease }, { transform: offset(mid[0], mid[1]), offset: plan.f, easing: MOTION.ease }, { transform: "none" }]
-      : [{ transform: offset(dx, dy) }, { transform: "none" }];
-    const timing = { duration: moveMs, delay: t, easing: plan.split ? "linear" : MOTION.ease, fill: "backwards" };
-    const vertical = this._layout.direction === "down" || this._layout.direction === "up";
-    for (const m of plan.moves) anims.push(this._els.get(m.id).animate(frames(m.dx, m.dy, m.mid), timing));
-    for (const m of decorMoves) anims.push(m.e.animate(frames(m.dx, m.dy, plan.split ? (vertical ? [m.dx, 0] : [0, m.dy]) : null), timing));
+    const timing = { duration: ms, delay: t, easing: MOTION.ease, fill: "backwards" };
+    for (const m of moves) anims.push(this._els.get(m.id).animate([{ transform: offset(m.dx, m.dy) }, { transform: "none" }], timing));
+    for (const m of decorMoves) anims.push(m.e.animate([{ transform: offset(m.dx, m.dy) }, { transform: "none" }], timing));
     for (const [o, w] of reshape) {
       // Already drawn: the trace's dashes were cut to the old length and would leave the end bare.
       for (const e of [o.halo, o.line]) { e.classList.remove("draw"); e.setAttribute("d", w.d); anims.push(e.animate([{ d: `path("${o.d}")` }, { d: `path("${w.d}")` }], timing)); }
@@ -3706,7 +3630,7 @@ class Atlas extends EventTarget {
       o.d = w.d;
       o.screen = w.screen;
     }
-    if (moveMs && (plan.moves.length || decorMoves.length)) t += moveMs;
+    if (ms) t += ms;
 
     // Enter: new nodes, titles and boxes.
     const enter = { duration: MOTION.enter, delay: t, easing: MOTION.enterEase, fill: "backwards" };
@@ -3793,7 +3717,7 @@ class Atlas extends EventTarget {
     if (key === "Escape") {
       // From a connection, back to the selection; on the selection, clear it. Without a selection
       // the key is not used here, and goes on (to a dialog around the map, for example).
-      this._ring = null;
+      this._stepping = null;
       if (this._selected === null) return;
       e.preventDefault();
       e.stopPropagation();
@@ -3810,7 +3734,7 @@ class Atlas extends EventTarget {
     else if (key === "End") next = lanes[li][lanes[li].length - 1];
     else return;
     e.preventDefault();
-    this._ring = null;
+    this._stepping = null;
     if (next) this._setTabStop(next, true);
   }
 
@@ -3880,60 +3804,9 @@ class Batch {
 // -----------------------------------------------------------------------------------------------
 // Helpers
 
-/** Where a node sits for routing: in the band before the flow ("top"), after it ("bot"), or in a
- *  flow column. */
-function placeOf(L) {
-  const col = new Map(L.flow.map((l, i) => [l.id, i]));
-  return id => {
-    const lane = L.laneOf.get(id);
-    if (L.before && lane === L.before.id) return { kind: "top" };
-    if (L.after && lane === L.after.id) return { kind: "bot" };
-    return { kind: "col", col: col.get(lane) };
-  };
-}
-
 /** The renames made by operations, in order: [from, to] pairs. */
 function renamesOf(ops) {
   return (Array.isArray(ops) ? ops : [ops]).filter(o => o?.op === "renameNode" && typeof o.from === "string" && typeof o.to === "string").map(o => [o.from, o.to]);
-}
-
-/** A model whose node order follows a layout's lane order (the new sketch). */
-function withOrder(model, L, keepPinned = false) {
-  const m = M.clone(model);
-  const pos = new Map();
-  let k = 0;
-  for (const lane of [L.before, ...L.flow, L.after].filter(Boolean)) for (const id of L.order.get(lane.id)) pos.set(id, k++);
-  const original = new Map(m.nodes.map((n, i) => [n.id, i]));
-  if (keepPinned) {
-    // Pinned nodes keep their index inside their lane.
-    const byLane = new Map();
-    for (const n of model.nodes) {
-      const lane = L.laneOf.get(n.id);
-      if (!byLane.has(lane)) byLane.set(lane, []);
-      byLane.get(lane).push(n.id);
-    }
-    for (const [lane, before] of byLane) {
-      const after = L.order.get(lane).filter(id => !model.nodes.find(n => n.id === id)?.pinned);
-      const merged = [];
-      let j = 0;
-      for (const id of before) merged.push(model.nodes.find(n => n.id === id)?.pinned ? id : after[j++]);
-      const base = Math.min(...before.map(id => pos.get(id)));
-      merged.forEach((id, i) => pos.set(id, base + i));
-    }
-  }
-  m.nodes.sort((a, b) => (pos.get(a.id) ?? original.get(a.id)) - (pos.get(b.id) ?? original.get(b.id)));
-  return m;
-}
-
-/** Parallel edges (same from and to) travel as one wire. */
-function mergeParallel(edges) {
-  const out = new Map();
-  for (const e of edges) {
-    const key = `${e.from}\u0000${e.to}`;
-    if (!out.has(key)) out.set(key, { id: e.id, from: e.from, to: e.to, ids: [] });
-    out.get(key).ids.push(e.id);
-  }
-  return [...out.values()];
 }
 
 function pathOf(points) {
@@ -4022,8 +3895,7 @@ function f(n) {
 }
 
 
-
-return { Atlas, model: M };
+return { Atlas };
 })();
 
 __modules.element = (() => {
@@ -4035,7 +3907,8 @@ __modules.element = (() => {
 //
 // The instance is at element.atlas; events bubble out as atlas-change, atlas-select, atlas-error.
 // element.ready settles when the current board is on screen (or failed) and element.error keeps the
-// last failure, so code that runs after the board loaded still learns how it went.
+// last failure, so code that runs after the board loaded still learns how it went. Removing the
+// element keeps its engine (it may only be moving); element.atlas.destroy() frees it.
 
 const { Atlas } = __modules.atlas;
 
@@ -4076,10 +3949,6 @@ class AtlasMap extends Base {
     if (!this.atlas || old === value) return;
     if (name === "src" && value) this._fetch(value);
     if (name === "selected") this.atlas.select(value, { focus: false });
-  }
-
-  disconnectedCallback() {
-    // Kept alive while moved around the document; call element.atlas.destroy() to free it.
   }
 
   async _fetch(src) {

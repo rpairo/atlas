@@ -3,40 +3,24 @@
 // checked in Node, without a browser. `vertical` gives the proportions of the down/up directions,
 // where a node is narrow along the flow and wide across it.
 import { layout } from "../src/layout.js";
-import { demand, corridorSize, sideSize } from "../src/route.js";
+import { demand, corridorWidths, placeOf, sideSize } from "../src/route.js";
 
-const MIN_GUTTER = 56, MIN_CHANNEL = 30, MIN_OUTER = 26, BAND = 56, GAP = 14;
+const BAND = 56, GAP = 14;
 
 export function geometry(model, { vertical = false } = {}) {
   const L = layout(model);
   const N = L.flow.length;
-  const col = new Map(L.flow.map((l, i) => [l.id, i]));
-  const place = id => {
-    const lane = L.laneOf.get(id);
-    if (L.before && lane === L.before.id) return { kind: "top" };
-    if (L.after && lane === L.after.id) return { kind: "bot" };
-    return { kind: "col", col: col.get(lane) };
-  };
-  // The same abstract positions the renderer uses to size corridors.
-  const bandIndex = new Map();
-  for (const band of [L.before, L.after]) if (band) L.order.get(band.id).forEach((id, i, a) => bandIndex.set(id, (i + 0.5) / a.length * N));
-  const abstract = id => {
-    const p = place(id);
-    if (p.kind === "top") return { u: bandIndex.get(id) - 0.5, v: -0.5 };
-    if (p.kind === "bot") return { u: bandIndex.get(id) - 0.5, v: 1.5 };
-    return { u: p.col, v: (L.slots.get(id) + 0.5) / Math.max(1, L.rows) };
-  };
+  const place = placeOf(L);
   const ids = model.nodes.map(n => n.id);
   const edges = model.edges.filter(e => e.from !== e.to);
-  const need = demand(ids, edges, place, abstract, { ct: 0, cb: 1 });
-  const size = (c, min) => Math.max(min, corridorSize(need.tracks.get(c) ?? 0, c[0] === "g" ? "g" : "c"));
+  const need = demand(model, L), w = corridorWidths(need, N);
   const ports = (id, s) => sideSize(need.ports.get(`${id}:${s}`) ?? 0);
 
   const nodeU = vertical ? 56 : 200;          // extent along the flow
   const nodeV = vertical ? 170 : 56;          // extent across it
   const rowV = Math.max(nodeV, ...ids.map(id => Math.max(ports(id, "L"), ports(id, "R")))) + GAP;
 
-  const gut = Array.from({ length: N + 1 }, (_, k) => size("g" + k, k === 0 || k === N ? MIN_OUTER : MIN_GUTTER));
+  const gut = w.g;
   const corridors = {};
   let u = 0;
   const colU = [];
@@ -48,13 +32,13 @@ export function geometry(model, { vertical = false } = {}) {
   const W = u;
   let v = 0;
   const span = (name, len) => { corridors[name] = { a: v, b: v + len }; v += len; };
-  span("ca", size("ca", 12));
+  span("ca", w.ca);
   const topV = v; v += BAND;
-  span("ct", size("ct", MIN_CHANNEL));
+  span("ct", w.ct);
   const flowV = v; v += Math.max(1, L.rows) * rowV - GAP;
-  span("cb", size("cb", MIN_CHANNEL));
+  span("cb", w.cb);
   const botV = v; v += BAND;
-  span("cz", size("cz", 12));
+  span("cz", w.cz);
 
   const boxes = new Map();
   L.flow.forEach((lane, k) => L.order.get(lane.id).forEach(id => {

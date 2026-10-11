@@ -92,11 +92,8 @@ export function normalize(input) {
   const edges = asArray(doc.edges).map(e => {
     const edge = compact(e);
     if ((edge.id === undefined || edge.id === "") && typeof edge.from === "string" && typeof edge.to === "string") {
-      const base = `${edge.from}->${edge.to}`;
-      let n = 0, id = base;
-      while (taken.has(id)) id = `${base}#${++n}`;
-      taken.add(id);
-      edge.id = id;
+      edge.id = edgeId(edge, id => taken.has(id));
+      taken.add(edge.id);
     }
     return edge;
   });
@@ -389,9 +386,7 @@ const APPLY = {
     insertAt(m.nodes, compact(node), anchorOr(m, before, after, p) ?? positionIn(m, node.lane ?? null, index));
   },
   updateNode(m, { id, changes }, p) {
-    const n = find(m.nodes, id, p);
-    const { id: _ignored, ...rest } = changes ?? {};
-    assign(n, rest);
+    assign(find(m.nodes, id, p), changes);
   },
   moveNode(m, { id, lane, index, before, after }, p) {
     const i = indexOf(m.nodes, id, p);
@@ -415,10 +410,7 @@ const APPLY = {
       if (e.to === from) e.to = to;
       if (derived) {
         // The same suffix if it is free, or the next free one: never an id another edge has.
-        const base = `${e.from}->${e.to}`;
-        let id = e.id.replace(/^[^#]*/, base), n = 0;
-        while (m.edges.some(x => x !== e && x.id === id)) id = `${base}#${++n}`;
-        e.id = id;
+        e.id = edgeId(e, id => m.edges.some(x => x !== e && x.id === id), e.id.replace(/^[^#]*/, `${e.from}->${e.to}`));
       }
     }
     for (const c of m.constraints) for (const k of ["node", "a", "b"]) if (c[k] === from) c[k] = to;
@@ -427,18 +419,11 @@ const APPLY = {
   addEdge(m, { edge }, p) {
     need(edge && edge.from && edge.to, p, "edge with from and to is required");
     const e = compact(edge);
-    if (!e.id && typeof e.from === "string" && typeof e.to === "string") {
-      const base = `${e.from}->${e.to}`;
-      let n = 0, id = base;
-      while (m.edges.some(x => x.id === id)) id = `${base}#${++n}`;
-      e.id = id;
-    }
+    if (!e.id && typeof e.from === "string" && typeof e.to === "string") e.id = edgeId(e, id => m.edges.some(x => x.id === id));
     m.edges.push(e);
   },
   updateEdge(m, { id, changes }, p) {
-    const e = find(m.edges, id, p);
-    const { id: _ignored, ...rest } = changes ?? {};
-    assign(e, rest);
+    assign(find(m.edges, id, p), changes);
   },
   removeEdge(m, { id }, p) {
     m.edges.splice(indexOf(m.edges, id, p), 1);
@@ -449,8 +434,7 @@ const APPLY = {
   },
   updateLane(m, { id, changes }, p) {
     const i = indexOf(m.lanes, id, p);
-    const { id: _ignored, ...rest } = changes ?? {};
-    assign(m.lanes[i], rest);
+    assign(m.lanes[i], changes);
     // A kind left out falls back to "flow", placed first as normalize() places it: saving twice gives
     // the same text.
     if (m.lanes[i].kind == null) m.lanes[i] = { kind: "flow", ...m.lanes[i] };
@@ -471,9 +455,7 @@ const APPLY = {
     m.groups.push(compact(group));
   },
   updateGroup(m, { id, changes }, p) {
-    const g = find(m.groups, id, p);
-    const { id: _ignored, ...rest } = changes ?? {};
-    assign(g, rest);
+    assign(find(m.groups, id, p), changes);
   },
   removeGroup(m, { id }, p) {
     const g = find(m.groups, id, p);
@@ -638,9 +620,17 @@ function compact(o) {
 }
 
 /** Merges changes; a value of undefined or null removes the field. */
+/** Merges `changes` into `target`: null or undefined removes a field; the id never changes here. */
+/** The derived id of an edge: `first` (by default `from->to`) or, while taken, `from->to#1`, `#2`… */
+function edgeId(e, used, first = `${e.from}->${e.to}`) {
+  let n = 0, id = first;
+  while (used(id)) id = `${e.from}->${e.to}#${++n}`;
+  return id;
+}
+
 function assign(target, changes) {
-  for (const [k, v] of Object.entries(changes)) {
-    if (FORBIDDEN_KEYS.has(k)) continue;
+  for (const [k, v] of Object.entries(changes ?? {})) {
+    if (k === "id" || FORBIDDEN_KEYS.has(k)) continue;
     if (v === undefined || v === null) delete target[k];
     else target[k] = v;
   }

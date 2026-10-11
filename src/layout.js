@@ -9,7 +9,7 @@
 // With no flow lanes declared, lanes come from the relations themselves (layered drawing).
 // Pure and deterministic: no DOM, no randomness, bounded iterations.
 
-import { UNASSIGNED, laneOf } from "./model.js";
+import { UNASSIGNED, laneOf, clone } from "./model.js";
 
 const AUTO = "atlas:auto-";
 const SWEEPS = 8;
@@ -20,7 +20,6 @@ const SWEEPS = 8;
  */
 export function layout(model, options = {}) {
   const { optimize = false } = options;
-  const nodes = new Map(model.nodes.map(n => [n.id, n]));
   const lanes = resolveLanes(model);
   const rank = new Map();
   if (lanes.before) rank.set(lanes.before.id, -1);
@@ -54,7 +53,7 @@ export function layout(model, options = {}) {
     slots: slots.slot,
     rows: slots.rows,
     edgeClass,
-    groups: groupSpans(model, order, slots.slot, nodes),
+    groups: groupSpans(model, order, slots.slot),
     warnings,
   };
 }
@@ -92,10 +91,10 @@ function constraintWarnings(model, lanes, order) {
 
 /** Groups whose members, in some lane, have other nodes between them (constraints put them there). */
 function splitGroups(model, order) {
-  const out = [];
+  const chain = chainOf(model), nodes = new Map(model.nodes.map(n => [n.id, n])), out = [];
   for (const g of model.groups) for (const [lane, ids] of order) {
     const at = [];
-    ids.forEach((id, i) => { if (inGroup(model.nodes.find(n => n.id === id), g.id, model)) at.push(i); });
+    ids.forEach((id, i) => { if (chain(nodes.get(id).group).includes(g.id)) at.push(i); });
     if (at.length > 1 && at[at.length - 1] - at[0] + 1 !== at.length) {
       out.push({ path: "groups", code: "group-split", message: `constraints put other nodes between the members of group "${g.id}" in lane "${lane}"` });
     }
@@ -448,24 +447,12 @@ function enforce(ids, c, model) {
 }
 
 function groupBlocks(ids, model) {
-  const groups = new Map(model.groups.map(g => [g.id, g]));
-  const nodes = new Map(model.nodes.map(n => [n.id, n]));
-  const chain = id => {
-    const out = [];
-    let g = nodes.get(id)?.group;
-    const guard = new Set();
-    while (g != null && groups.has(g) && !guard.has(g)) {
-      guard.add(g);
-      out.unshift(g);
-      g = groups.get(g).parent;
-    }
-    return out;
-  };
+  const chain = chainOf(model), nodes = new Map(model.nodes.map(n => [n.id, n]));
   // A tree of blocks keyed by group path; children in order of first appearance.
   const root = { items: [], index: new Map() };
   for (const id of ids) {
     let node = root;
-    for (const g of chain(id)) {
+    for (const g of chain(nodes.get(id)?.group)) {
       if (!node.index.has(g)) {
         const child = { items: [], index: new Map() };
         node.index.set(g, child);
@@ -601,19 +588,8 @@ function staysGrouped(ids, i, model) {
 
 /** A function giving each node's chain of groups as a key; nodes with the same key can swap freely. */
 function groupChains(model) {
-  const groups = new Map(model.groups.map(g => [g.id, g]));
-  const nodes = new Map(model.nodes.map(n => [n.id, n]));
-  const memo = new Map();
-  return id => {
-    if (memo.has(id)) return memo.get(id);
-    const out = [];
-    let g = nodes.get(id)?.group;
-    const guard = new Set();
-    while (g != null && groups.has(g) && !guard.has(g)) { guard.add(g); out.push(g); g = groups.get(g).parent; }
-    const key = out.join("\0");
-    memo.set(id, key);
-    return key;
-  };
+  const chain = chainOf(model), nodes = new Map(model.nodes.map(n => [n.id, n]));
+  return id => chain(nodes.get(id)?.group).join("\0");
 }
 
 function orderBand(bandId, lanes, order, adjacency, constraints, model) {
@@ -691,7 +667,7 @@ function balance(lanes, order, adjacency) {
     for (const laneId of seq) {
       const ids = order.get(laneId);
       if (ids.length === rows || ids.length === 0) continue;
-      const targets = ids.map(id => medianOf([...adjacency.get(id)].filter(w => slot.has(w) && lanesOf(lanes, w) !== laneId).map(w => slot.get(w))));
+      const targets = ids.map(id => medianOf([...adjacency.get(id)].filter(w => slot.has(w) && lanes.laneOfNode.get(w) !== laneId).map(w => slot.get(w))));
       const result = placeInSlots(ids.length, rows, (k, r) => {
         const t = targets[k];
         return (t === null ? 0 : Math.abs(r - t)) + r * 1e-4;
@@ -702,10 +678,6 @@ function balance(lanes, order, adjacency) {
   // Bands: each node takes its index (bands lay out in their own row).
   for (const band of [lanes.before, lanes.after]) if (band) order.get(band.id).forEach((n, i) => slot.set(n, i));
   return { slot, rows };
-}
-
-function lanesOf(lanes, id) {
-  return lanes.laneOfNode.get(id);
 }
 
 /** Strictly increasing slots for n items in R rows minimizing Σ cost(k, r). O(n·R). */
@@ -743,10 +715,10 @@ function classifyEdges(model, laneOfNode, rank) {
   return out;
 }
 
-function groupSpans(model, order, slot, nodes) {
-  const spans = [];
+function groupSpans(model, order, slot) {
+  const chain = chainOf(model), spans = [];
   for (const g of model.groups) {
-    const members = model.nodes.filter(n => inGroup(n, g.id, model)).map(n => n.id);
+    const members = model.nodes.filter(n => chain(n.group).includes(g.id)).map(n => n.id);
     if (!members.length) continue;
     const byLane = new Map();
     for (const id of members) {
@@ -755,28 +727,23 @@ function groupSpans(model, order, slot, nodes) {
         byLane.get(lane).push(slot.get(id));
       }
     }
-    for (const [lane, ss] of byLane) spans.push({ group: g.id, title: g.title ?? "", lane, from: Math.min(...ss), to: Math.max(...ss), depth: depthOf(g, model) });
+    for (const [lane, ss] of byLane) spans.push({ group: g.id, title: g.title ?? "", lane, from: Math.min(...ss), to: Math.max(...ss), depth: chain(g.id).length - 1 });
   }
   return spans;
 }
 
-function inGroup(node, groupId, model) {
+/** The group `g` and the groups around it, outermost first (a function of `g`, memoized). */
+function chainOf(model) {
   const groups = new Map(model.groups.map(g => [g.id, g]));
-  let g = node.group;
-  const guard = new Set();
-  while (g != null && !guard.has(g)) {
-    if (g === groupId) return true;
-    guard.add(g);
-    g = groups.get(g)?.parent;
-  }
-  return false;
-}
-
-function depthOf(group, model) {
-  const groups = new Map(model.groups.map(g => [g.id, g]));
-  let d = 0, g = group.parent;
-  while (g != null && groups.has(g) && d < 10) { d++; g = groups.get(g).parent; }
-  return d;
+  const memo = new Map();
+  return g => {
+    if (!memo.has(g)) {
+      const out = [], seen = new Set();
+      for (let x = g; x != null && groups.has(x) && !seen.has(x); x = groups.get(x).parent) { seen.add(x); out.unshift(x); }
+      memo.set(g, out);
+    }
+    return memo.get(g);
+  };
 }
 
 function positionsOf(order) {
@@ -802,4 +769,34 @@ function lexLess(a, b) {
     if (a[i] > b[i] + 1e-9) return false;
   }
   return false;
+}
+
+/** A model whose node order follows a layout's lane order (the new sketch); with `keepPinned`,
+ *  pinned nodes keep their index inside their lane. */
+export function withOrder(model, L, keepPinned = false) {
+  const m = clone(model);
+  const pos = new Map();
+  let k = 0;
+  for (const lane of [L.before, ...L.flow, L.after].filter(Boolean)) for (const id of L.order.get(lane.id)) pos.set(id, k++);
+  const original = new Map(m.nodes.map((n, i) => [n.id, i]));
+  if (keepPinned) {
+    // Pinned nodes keep their index inside their lane.
+    const pinned = new Set(model.nodes.filter(n => n.pinned).map(n => n.id));
+    const byLane = new Map();
+    for (const n of model.nodes) {
+      const lane = L.laneOf.get(n.id);
+      if (!byLane.has(lane)) byLane.set(lane, []);
+      byLane.get(lane).push(n.id);
+    }
+    for (const [lane, before] of byLane) {
+      const after = L.order.get(lane).filter(id => !pinned.has(id));
+      const merged = [];
+      let j = 0;
+      for (const id of before) merged.push(pinned.has(id) ? id : after[j++]);
+      const base = Math.min(...before.map(id => pos.get(id)));
+      merged.forEach((id, i) => pos.set(id, base + i));
+    }
+  }
+  m.nodes.sort((a, b) => (pos.get(a.id) ?? original.get(a.id)) - (pos.get(b.id) ?? original.get(b.id)));
+  return m;
 }

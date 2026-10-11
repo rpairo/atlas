@@ -370,7 +370,7 @@ try {
         // The detail lists the neighbours in the order of the steps.
         map.select(hub, { focus: false, animate: false });
         const listed = [...map.root.querySelectorAll(".panel .rel button .rt")].map(x => x.textContent);
-        const stepsOrder = map._star(hub).all.map(x => map.node(x.id)?.title ?? x.id);
+        const stepsOrder = map._neighbours(hub).all.map(x => map.node(x.id)?.title ?? x.id);
         const firstEach = [...map.root.querySelectorAll(".panel .rel")].flatMap(r => [...new Set([...r.querySelectorAll("button .rt")].map(x => x.textContent))]);
         if (firstEach.join("|") !== stepsOrder.join("|")) res.behaviour.push(`the detail of ${hub} lists ${firstEach.slice(0, 4).join(", ")}; the keys step ${stepsOrder.slice(0, 4).join(", ")}`);
       }
@@ -380,11 +380,11 @@ try {
     const hub = live.find(x => m0.edges.filter(e => e.to === x && e.from !== x).length >= 2);
     if (hub) {
       map.select(hub, { animate: false });
-      const total = map._star(hub).all.length;
+      const total = map._neighbours(hub).all.length;
       let at = hub;
       for (let k = 1; k <= Math.min(total, 4); k++) {
         at = press(at, "ArrowDown");
-        const n = map._star(hub).in.length;
+        const n = map._neighbours(hub).in.length;
         const want = k <= n ? `${k} of ${n}` : `${k - n} of ${total - n}`;
         if (!desc(at).includes(want)) res.behaviour.push(`step ${k} from ${hub} is described as "${desc(at)}", not "${want}"`);
       }

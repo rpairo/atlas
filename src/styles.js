@@ -7,6 +7,12 @@
 // `--paper` and sets `--atlas-paper: var(--paper)` (a cycle that leaves both empty). On .atlas
 // they only shadow what is inside, and the same rules work without a shadow root.
 
+// The dark defaults, for the system's dark mode and for theme="dark".
+const DARK = `--paper: var(--atlas-paper, #0c141e); --sheet: var(--atlas-sheet, #132030); --ink: var(--atlas-ink, #e3eaf2);
+  --ink-2: var(--atlas-ink-2, #98a9bd); --rule: var(--atlas-rule, #2a3a4e); --grid: var(--atlas-grid, #152232);
+  --out: var(--atlas-out, #e88d52); --in: var(--atlas-in, #6ea8ec); --shadow: var(--atlas-shadow, rgba(0, 0, 0, .55));
+  --mark: var(--atlas-mark, #3a3112); --mark-dot: var(--atlas-mark-dot, #e0b43a);`;
+
 export const STYLES = `
 :host {
   display: block;
@@ -39,20 +45,16 @@ export const STYLES = `
 }
 @media (prefers-color-scheme: dark) {
   :host(:not([theme="light"])) .atlas, :not([theme="light"]) > .atlas {
-    --paper: var(--atlas-paper, #0c141e); --sheet: var(--atlas-sheet, #132030); --ink: var(--atlas-ink, #e3eaf2);
-    --ink-2: var(--atlas-ink-2, #98a9bd); --rule: var(--atlas-rule, #2a3a4e); --grid: var(--atlas-grid, #152232);
-    --out: var(--atlas-out, #e88d52); --in: var(--atlas-in, #6ea8ec); --shadow: var(--atlas-shadow, rgba(0, 0, 0, .55));
-    --mark: var(--atlas-mark, #3a3112); --mark-dot: var(--atlas-mark-dot, #e0b43a);
+    ${DARK}
   }
 }
 :host([theme="dark"]) .atlas, [theme="dark"] > .atlas {
-  --paper: var(--atlas-paper, #0c141e); --sheet: var(--atlas-sheet, #132030); --ink: var(--atlas-ink, #e3eaf2);
-  --ink-2: var(--atlas-ink-2, #98a9bd); --rule: var(--atlas-rule, #2a3a4e); --grid: var(--atlas-grid, #152232);
-  --out: var(--atlas-out, #e88d52); --in: var(--atlas-in, #6ea8ec); --shadow: var(--atlas-shadow, rgba(0, 0, 0, .55));
-    --mark: var(--atlas-mark, #3a3112); --mark-dot: var(--atlas-mark-dot, #e0b43a);
+  ${DARK}
 }
 @supports (height: 1dvh) { .atlas { --sheet-height: var(--atlas-sheet-height, min(max(42dvh, 280px), 100dvh - 120px)); } }
 *, *::before, *::after { box-sizing: border-box; }
+/* The small labels: lane titles, the detail's lane line, its relation headings and the sheet's counts. */
+:is(.lane-title, .p-lane, .r-title, .p-counts) { font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; }
 [hidden] { display: none !important; }
 button { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
@@ -61,7 +63,6 @@ button { font: inherit; color: inherit; }
    detail panel when the panel is a drawer that overlaps it, and nothing of Atlas over the page. */
 .atlas { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); align-items: start; isolation: isolate; }
 .atlas[data-panel="side"] { grid-template-columns: minmax(0, 1fr) var(--atlas-panel-width, 300px); }
-.atlas[data-panel="none"] .panel { display: none; }
 
 .board {
   position: relative; display: grid; min-width: 0;
@@ -84,7 +85,7 @@ button { font: inherit; color: inherit; }
 
 /* Bands and lanes */
 .lane-title {
-  margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2);
+  margin: 0; color: var(--ink-2);
   display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere;
 }
 .lane-title::after { content: ""; flex: 1; border-top: 1px solid var(--rule); }   /* a border: it prints and survives forced colours */
@@ -93,7 +94,6 @@ ol.nodes { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; mi
 ol.nodes > li { min-width: 0; display: grid; }
 ol.nodes > li > .panel { margin-top: 10px; }
 .band { display: grid; gap: 10px; min-width: 0; position: relative; z-index: 1; }
-.band.after .lane-title { order: 2; }
 .flow { display: grid; min-width: 0; position: relative; z-index: 1; }
 .lane { display: grid; min-width: 0; }
 /* A group: a dashed box behind its nodes and, when titled, a legend in a grid row of its own that
@@ -157,7 +157,6 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
   grid-template-columns: minmax(0, 1fr);   /* never as wide as a long unbroken title */
 }
 .atlas[data-panel="side"] .panel { position: sticky; top: var(--panel-top); max-height: calc(100vh - 2 * var(--panel-top)); overflow: auto; }
-.atlas[data-panel="below"] .panel { position: static; }
 /* The sheet: sticky at the foot of the window, its head always there, its body only when open. Grid
    rows (not flex) so the body scrolls inside the open sheet in every engine. */
 .atlas[data-panel="sheet"] .panel {
@@ -174,10 +173,10 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 }
 .p-toggle:hover { background: color-mix(in srgb, var(--paper) 55%, var(--sheet)); }
 .p-toggle:focus-visible { outline-offset: -2px; }
-.p-toggle .p-lane { flex: none; margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2); }
+.p-toggle .p-lane { flex: none; }
 .p-toggle .p-name { flex: 0 1 auto; min-width: 0; font-size: 1.05rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .p-toggle .p-sub { flex: 1 1 0; min-width: 0; font: 12.5px/1.4 var(--mono); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.p-counts { flex: none; display: flex; gap: 14px; margin-inline-start: auto; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; }
+.p-counts { flex: none; display: flex; gap: 14px; margin-inline-start: auto; }
 .p-counts > span { display: inline-flex; align-items: center; gap: 6px; }
 .p-counts > span::before { content: ""; width: 12px; border-top: 2px solid; }
 .p-counts [data-dir="in"] { color: var(--in); } .p-counts [data-dir="out"] { color: var(--out); }
@@ -196,13 +195,13 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 /* Inline (stacked), the detail sits right under its node: its head would repeat the node, so it is
    kept for screen readers only. */
 .atlas[data-panel="inline"] .panel > :is(.p-lane, .p-title, .p-sub) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.panel .p-lane { margin: 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; color: var(--ink-2); }
+.p-lane { margin: 0; color: var(--ink-2); }
 .panel .p-title { margin: 0; font-size: 1.4rem; line-height: 1.2; text-wrap: balance; overflow-wrap: anywhere; }
 .panel .p-sub { margin: 0; font: 12.5px/1.4 var(--mono); color: var(--ink-2); overflow-wrap: anywhere; }
 .panel li { overflow-wrap: anywhere; }
 .panel ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; list-style: disc; } /* inline, the panel sits in a lane's list */
 .rel { display: grid; gap: 6px; }
-.rel .r-title { margin: 4px 0 0; font: 500 11.5px/1.3 var(--mono); text-transform: uppercase; letter-spacing: .09em; display: flex; align-items: center; gap: 8px; }
+.rel .r-title { margin: 4px 0 0; display: flex; align-items: center; gap: 8px; }
 .rel .r-title::before { content: ""; width: 16px; border-top: 2px solid; }
 .rel[data-dir="in"] .r-title { color: var(--in); }
 .rel[data-dir="out"] .r-title { color: var(--out); }
@@ -243,7 +242,7 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .atlas[data-mode="stack"] .board > * { grid-column: auto !important; grid-row: auto !important; }
 .atlas[data-mode="stack"] .gutter, .atlas[data-mode="stack"] .channel { display: none; }
 .atlas[data-mode="stack"] .band { grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: none !important; }
-.atlas[data-mode="stack"] .band > * { grid-column: auto !important; grid-row: auto !important; order: 0 !important; }
+.atlas[data-mode="stack"] .band > * { grid-column: auto !important; grid-row: auto !important; }
 .atlas[data-mode="stack"] .band.after .lane-title { order: -1 !important; }
 .atlas[data-mode="stack"] ol.nodes { margin: 0 !important; }
 .atlas[data-mode="stack"] .lane ol.nodes { grid-template-columns: minmax(0, 1fr) !important; grid-template-rows: none !important; }

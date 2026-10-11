@@ -6,7 +6,8 @@
 //
 // The instance is at element.atlas; events bubble out as atlas-change, atlas-select, atlas-error.
 // element.ready settles when the current board is on screen (or failed) and element.error keeps the
-// last failure, so code that runs after the board loaded still learns how it went.
+// last failure, so code that runs after the board loaded still learns how it went. Removing the
+// element keeps its engine (it may only be moving); element.atlas.destroy() frees it.
 
 import { Atlas } from "./atlas.js";
 
@@ -47,10 +48,6 @@ export class AtlasMap extends Base {
     if (!this.atlas || old === value) return;
     if (name === "src" && value) this._fetch(value);
     if (name === "selected") this.atlas.select(value, { focus: false });
-  }
-
-  disconnectedCallback() {
-    // Kept alive while moved around the document; call element.atlas.destroy() to free it.
   }
 
   async _fetch(src) {
