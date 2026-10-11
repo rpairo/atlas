@@ -3,7 +3,9 @@
 //   npm install --no-save playwright@1.63.0 && npx playwright install firefox webkit
 //   node scripts/audit-browsers.mjs [firefox] [webkit] [chromium]
 // Playwright is not a dependency of Atlas; CI installs it only for this job.
-import { spawn } from "node:child_process";
+import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { firefox, webkit, chromium } from "playwright";
 
@@ -27,9 +29,22 @@ for (const d of ["left", "down"]) runs.push({ board: "../fixtures/groups.json", 
 runs.push({ w: 1400, forced: true, only: chromiumBased }, { w: 900, forced: true, only: chromiumBased });
 runs.push({ w: 1400, dark: true }, { board: "../fixtures/groups.json", w: 900, dark: true });
 
-const port = 20000 + Math.floor(Math.random() * 20000);
-const server = spawn("python3", ["-m", "http.server", String(port), "--bind", "127.0.0.1"], { cwd: REPO, stdio: "ignore" });
-await new Promise(r => setTimeout(r, 700));
+// A static server for the checkout on 127.0.0.1, never outside it, with the module MIME types set
+// here (Python's server takes them from the Windows registry, where .js may be text/plain).
+const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png" };
+const root = resolve(REPO);
+const server = createServer(async (req, res) => {
+  let path;
+  try { path = decodeURIComponent(new URL(req.url, "http://localhost").pathname); } catch { return res.writeHead(400).end(); }
+  if (path === "/favicon.ico") return res.writeHead(204).end();   // Chromium asks for it and logs a 404 as an error
+  const file = resolve(root, "." + path);
+  if (file !== root && !file.startsWith(root + sep)) return res.writeHead(403).end();
+  let body;
+  try { body = await readFile(file); } catch { return res.writeHead(404).end(); }
+  res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream", "cache-control": "no-store" }).end(body);
+});
+await new Promise((ok, no) => { server.once("error", no); server.listen(0, "127.0.0.1", ok); });
+const port = server.address().port;
 let failures = 0;
 try {
   for (const name of wanted) {
@@ -67,5 +82,5 @@ try {
     console.log(`== ${name}: ${clean} of ${mine.length} runs clean`);
     await browser.close();
   }
-} finally { server.kill(); }
+} finally { server.close(); }
 process.exit(failures ? 1 : 0);

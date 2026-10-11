@@ -4,3 +4,9 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    # A new version waits a week before it is proposed, and all of a month's updates come together.
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

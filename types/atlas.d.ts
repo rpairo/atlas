@@ -432,6 +432,26 @@ export interface Labels {
   board: string;
   /** Accessible name of the detail panel. Default `Detail`. */
   detail: string;
+  /**
+   * What a selection says to screen readers, with `{title}`, `{incoming}` and `{outgoing}` (other
+   * nodes, each counted once). Without it: "Triage: 5 incoming, 2 outgoing" built from `incoming`
+   * and `outgoing`. A self-loop adds `selfLoop`.
+   */
+  summary?: string;
+  /** A keyboard step to an incoming connection, with `{n}`, `{total}`, `{hub}`. Default `Incoming {n} of {total} into {hub}`. */
+  inStep: string;
+  /** A keyboard step to an outgoing connection. Default `Outgoing {n} of {total} from {hub}`. */
+  outStep: string;
+  /** No incoming connection to step to, with `{hub}`. Default `{hub}: no incoming connections`. */
+  noneIn: string;
+  /** No outgoing connection to step to. Default `{hub}: no outgoing connections`. */
+  noneOut: string;
+  /** No connection at all. Default `{hub}: no connections`. */
+  noneAll: string;
+  /** Said when Escape clears the selection. Default `Selection cleared`. */
+  cleared: string;
+  /** The board's description: the keys it takes. */
+  keys: string;
 }
 
 /** Live content of a node, set with `setState()`. */
@@ -450,7 +470,7 @@ export interface AtlasOptions {
   labels?: Partial<Labels>;
   /** Custom node content: fill `button` (it receives a copy of the node and its live state). */
   renderNode?: (node: Node, button: HTMLButtonElement, live: LiveState) => void;
-  /** Trace wires when selecting. Default `true`. */
+  /** Motion: wires trace when selecting, and edits move nodes into place. `false` turns all of it off. Default `true`. */
   animate?: boolean;
   /** Render into a shadow root of the host. Default `true`. */
   shadow?: boolean;
@@ -534,7 +554,7 @@ export declare class Atlas extends EventTarget {
   node(id: string): Node | null;
   /** Copies of the edges that start or end at the node. */
   edges(id: string): ModelEdge[];
-  /** Ids of the nodes whose title, subtitle or details contain `text` (case-insensitive). */
+  /** Ids of the nodes whose title, subtitle (the live one too) or details contain `text`, ignoring case and accents, in reading order. Blank text finds nothing. */
   find(text: string): string[];
   suggestions(): Suggestion[];
 
