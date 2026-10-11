@@ -30,8 +30,15 @@ try {
   }
   // offset=N: the map starts N px down the page (a header above it, as on most sites).
   if (q.get("offset")) document.querySelector("main").style.paddingTop = `${Number(q.get("offset"))}px`;
-  // bars=1: classic scroll bars that take room (as on Windows), wherever the audit runs.
-  if (q.get("bars")) { const st = document.createElement("style"); st.textContent = "::-webkit-scrollbar { width: 17px; height: 17px; } ::-webkit-scrollbar-thumb { background: #999; }"; document.head.append(st); }
+  // bars=1: classic scroll bars that take room (as on Windows) in Chromium on any system, also
+  // inside the maps' shadow roots.
+  if (q.get("bars")) {
+    const css = "::-webkit-scrollbar { width: 15px; height: 15px; } ::-webkit-scrollbar-thumb { background: #999; }";
+    const st = document.createElement("style"); st.textContent = css; document.head.append(st);
+    const sheet = new CSSStyleSheet(); sheet.replaceSync(css);
+    const attach = Element.prototype.attachShadow;
+    Element.prototype.attachShadow = function (init) { const r = attach.call(this, init); r.adoptedStyleSheets = [sheet]; return r; };
+  }
   // theme=dark or theme=light: a forced theme, whatever the system's.
   if (q.get("theme")) host.setAttribute("theme", q.get("theme"));
   const map = new Atlas(host, { document: text, animate: false });
@@ -696,6 +703,10 @@ try {
       const ctx = () => { const b = m._board.getBoundingClientRect(), h = m.host.getBoundingClientRect(); return `board ${(b.left - h.left).toFixed(1)},${(b.top - h.top).toFixed(1)} ${b.width.toFixed(1)}x${b.height.toFixed(1)}, scrollLeft ${m._boardWrap.scrollLeft}, ${m._wrap.dataset.mode}/${m._wrap.dataset.panel}`; };
       const ctx0 = ctx();
       m.undo();
+      // Nodes in flight never make the box around the board scroll (with classic scroll bars, as on
+      // Windows, a scroll bar would come and go and move every node).
+      const bw = m._boardWrap;
+      if (bw.scrollHeight > bw.clientHeight + 1 || bw.scrollWidth > Math.max(bw.clientWidth, m._board.offsetWidth) + 1) res.motion.push(`nodes in flight overflow the board (${bw.scrollWidth}x${bw.scrollHeight} in ${bw.clientWidth}x${bw.clientHeight})`);
       let jump = 0, who = "", count = 0;
       for (const [id, p] of seen) if (m._els.has(id)) { const q = box(m, id), d = Math.hypot(q.x - p.x, q.y - p.y); if (d > 1) count++; if (d > jump) { jump = d; who = `${id} by ${(q.x - p.x).toFixed(1)},${(q.y - p.y).toFixed(1)}`; } }
       if (jump > 1) res.motion.push(`an edit during a move made ${count} nodes jump, up to ${jump.toFixed(1)}px (${who}; before: ${ctx0}; after: ${ctx()}; ${m._animations.length} animations, ${m._animations.filter(a => a.effect?.target?.dataset?.key).length} on titles)`);

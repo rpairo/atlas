@@ -2009,10 +2009,13 @@ button { font: inherit; color: inherit; }
      their size, every lane at --node-min): below that, the wrapper scrolls sideways. */
   width: auto;
   min-width: min-content;
+  /* Nodes in flight (an edit's transforms) never make the box around it scroll: with classic scroll
+     bars (Windows) a scroll bar appearing for the length of a move took 15 px and moved every node. */
+  overflow: clip;
 }
 /* The board is geometry: lanes, corridors and wires are measured left to right, so it stays left to
    right on a right-to-left page (each text follows its own direction, see txt() in atlas.js). */
-.board-wrap { min-width: 0; overflow-x: auto; isolation: isolate; direction: ltr; }
+.board-wrap { min-width: 0; overflow-x: auto; overflow-y: hidden; isolation: isolate; direction: ltr; }
 
 /* Bands and lanes */
 .lane-title {
