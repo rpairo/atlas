@@ -1,4 +1,4 @@
-/*! Atlas 0.3.2 | MIT | https://github.com/rpairo/atlas */
+/*! Atlas 0.4.0 | MIT | https://github.com/rpairo/atlas */
 const __modules = {};
 __modules.model = (() => {
 // The board document: format, parsing, validation and edit operations.
@@ -4197,4 +4197,4 @@ return { Atlas, AtlasMap, define, FORMAT, LIMITS, AtlasError, parse, normalize, 
 })();
 
 export const { Atlas, AtlasMap, define, FORMAT, LIMITS, AtlasError, parse, normalize, validate, load, apply, serialize, diff, layout, bestInsertion, inversions, withLayers, route, demand, ROUTE } = __modules.index;
-export const VERSION = "0.3.2";
+export const VERSION = "0.4.0";

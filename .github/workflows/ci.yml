@@ -61,20 +61,11 @@ jobs:
         run: npx --yes -p typescript@7.0.2 tsc -p test/types
 
   audit:
-    # Chrome and Edge, the browsers Atlas is tuned for, run every check (the runner image has both).
-    name: ${{ matrix.name }}
+    name: browser audit
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: browser audit
-            browser: google-chrome
-          - name: browser audit (Edge)
-            browser: microsoft-edge
     env:
-      CHROME: ${{ matrix.browser }}
+      CHROME: google-chrome
       # The runner's kernel does not allow Chrome's sandbox; the pages are this repository's own,
       # served on localhost.
       CHROME_FLAGS: --no-sandbox
@@ -111,8 +102,25 @@ jobs:
             EXTRA="&direction=$direction" scripts/audit.sh ../fixtures/groups.json 1400
           done
 
+  chrome-playwright:
+    # Chrome again, through Playwright: what the headless page above cannot emulate (forced colours,
+    # reduced motion, fractional scale factors) and real frames.
+    name: browser audit (Chrome, emulation)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      - name: Playwright, driving the runner image's Chrome (not a dependency of Atlas)
+        run: npm install --no-save --no-package-lock playwright@1.63.0
+      - name: The audit in Chrome
+        run: node scripts/audit-browsers.mjs chrome
+
   edge-windows:
-    # Edge on Windows: its fonts and scroll bars, and forced colours (Windows contrast themes), emulated.
+    # Edge on Windows: its fonts, its classic scroll bars (headless hides them unless asked), scale
+    # factors of Windows laptops, and forced colours (Windows contrast themes), emulated.
     name: browser audit (Edge, Windows)
     runs-on: windows-latest
     timeout-minutes: 30
@@ -124,7 +132,7 @@ jobs:
       - name: Playwright, driving the Edge of the runner image (not a dependency of Atlas)
         run: npm install --no-save --no-package-lock playwright@1.63.0
       - name: The audit in Edge
-        run: node scripts/audit-browsers.mjs msedge
+        run: node scripts/audit-browsers.mjs msedge --scrollbars
 
   other-browsers:
     name: browser audit (Firefox, WebKit)

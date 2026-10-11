@@ -34,7 +34,8 @@ m = re.search(r'<pre id="audit">(.*?)</pre>', open(path).read(), re.S)
 if not m: print(w, "NO RESULT"); sys.exit(1)
 r = json.loads(html.unescape(m.group(1)))
 if "error" in r: print(w, "ERROR", r["error"][:800]); sys.exit(1)
-bad = {k: r.get(k) for k in ["missing", "underNode", "crossings", "close", "shortTip", "outside", "moved", "unpainted", "covered", "stack", "groups", "motion", "behaviour", "hidden", "loops"] if r.get(k)}
+# Every list in the result is a list of problems, except the log of edits (judged below).
+bad = {k: v for k, v in r.items() if isinstance(v, list) and v and k != "edits"}
 print(f"{w}px  mode={r['mode']}  nodes={r['nodes']}  wires={r['wires']}  slowest={r.get('slowest')}  edits={r['edits']}")
 for k, v in bad.items(): print(f"   {k}: {len(v)}  {v[:6]}")
 sys.exit(1 if bad or any(("DIFFERENT" in e or "MOVED" in e or "missing" in e) for e in r["edits"]) else 0)

@@ -28,6 +28,8 @@ try {
     host.setAttribute("style", "--atlas-paper:var(--paper);--atlas-sheet:var(--sheet);--atlas-ink:var(--ink);--atlas-rule:var(--rule)");
     host.setAttribute("theme", "light");
   }
+  // offset=N: the map starts N px down the page (a header above it, as on most sites).
+  if (q.get("offset")) document.querySelector("main").style.paddingTop = `${Number(q.get("offset"))}px`;
   // theme=dark or theme=light: a forced theme, whatever the system's.
   if (q.get("theme")) host.setAttribute("theme", q.get("theme"));
   const map = new Atlas(host, { document: text, animate: false });
