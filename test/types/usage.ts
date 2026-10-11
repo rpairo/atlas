@@ -220,6 +220,10 @@ const attributes: string[] = AtlasMap.observedAttributes;
 const whenReady: Promise<Atlas> = element.ready;
 const failure: ErrorDetail | null = element.error;
 const gone: boolean = map.destroyed;
+map.updateGroup("billing", { title: "Billing" });
+map.clearHistory();
+map.batch(b => b.addLane({ id: "extra", title: "Extra" }).setMeta({ title: "Shop" }).addConstraint({ type: "first", node: "paid" }));
+const limited = new Atlas(document.createElement("div"), { historyLimit: 10, labels: { board: "Mapa", detail: "Detalle" } });
 
 // The experimental internals.
 const placement: Layout = layout(loaded.model, { optimize: true });

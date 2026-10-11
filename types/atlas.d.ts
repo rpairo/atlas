@@ -414,6 +414,10 @@ export interface Labels {
   outgoing: string;
   unassigned: string;
   selfLoop: string;
+  /** Accessible name of the board when it has no `meta.title`. Default `Map`. */
+  board: string;
+  /** Accessible name of the detail panel. Default `Detail`. */
+  detail: string;
 }
 
 /** Live content of a node, set with `setState()`. */
@@ -436,6 +440,8 @@ export interface AtlasOptions {
   animate?: boolean;
   /** Render into a shadow root of the host. Default `true`. */
   shadow?: boolean;
+  /** Most undo steps kept. Default 200. */
+  historyLimit?: number;
 }
 
 /** A node whose edges mostly run against its lane, or a board with unassigned nodes. Advice only. */
@@ -474,6 +480,13 @@ export interface Batch {
   updateNode(id: string, changes: Changes<Node>): Batch;
   moveNode(id: string, options?: { lane?: string | null; index?: number; before?: string; after?: string }): Batch;
   disconnect(id: string): Batch;
+  updateEdge(id: string, changes: Changes<Edge>): Batch;
+  addLane(lane: Lane, options?: { index?: number }): Batch;
+  updateLane(id: string, changes: Changes<Lane>): Batch;
+  addGroup(group: Group): Batch;
+  updateGroup(id: string, changes: Changes<Group>): Batch;
+  addConstraint(constraint: Constraint): Batch;
+  setMeta(changes: Changes<Meta>): Batch;
 }
 
 /**
@@ -536,6 +549,7 @@ export declare class Atlas extends EventTarget {
   /** Its nodes move to `moveTo`, or lose their lane. */
   removeLane(id: string, options?: { moveTo?: string | null }): number;
   addGroup(group: Group): number;
+  updateGroup(id: string, changes: Changes<Group>): number;
   /** Its members and subgroups move to its parent. */
   removeGroup(id: string): number;
   addConstraint(constraint: Constraint): number;
@@ -554,6 +568,8 @@ export declare class Atlas extends EventTarget {
   redo(): boolean;
   get canUndo(): boolean;
   get canRedo(): boolean;
+  /** Forgets every undo and redo step (for example once the board is saved). */
+  clearHistory(): void;
 
   // Live content and viewing
 
