@@ -300,6 +300,15 @@ try {
     let undos = 0; while (m4.undo()) undos++;
     if (undos !== 2) res.behaviour.push(`historyLimit 2 kept ${undos} steps`);
     m4.destroy(); host4.remove();
+    // Headings fit the page's outline: lane titles and the detail's title at headingLevel (2 by
+    // default), the detail's relations one below.
+    const host6 = document.createElement("div"); document.body.append(host6);
+    const m6 = new Atlas(host6, { document: { lanes: [{ id: "L", title: "L" }], nodes: [{ id: "a", lane: "L" }, { id: "b", lane: "L" }], edges: [{ from: "a", to: "b" }] }, animate: false, headingLevel: 4 });
+    m6.select("a", { focus: false, animate: false });
+    const tags = [m6.root.querySelector(".lane-title")?.tagName, m6.root.querySelector(".p-title")?.tagName, m6.root.querySelector(".r-title")?.tagName].join(",");
+    if (tags !== "H4,H4,H5") res.behaviour.push(`headingLevel 4 gave ${tags}`);
+    if (map.root.querySelector(".lane-title")?.tagName !== "H2") res.behaviour.push(`default lane title is ${map.root.querySelector(".lane-title")?.tagName}`);
+    m6.destroy(); host6.remove();
   } catch (e) { res.behaviour.push(`additions check threw ${e.name}: ${e.message}`); }
   const rejections = [];
   addEventListener("unhandledrejection", e => rejections.push(String(e.reason?.message ?? e.reason)));

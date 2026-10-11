@@ -52,7 +52,7 @@ export class Atlas extends EventTarget {
   constructor(host, options = {}) {
     super();
     this.host = host;
-    this.options = { panel: "auto", animate: true, shadow: true, historyLimit: 200, ...clean(options) };
+    this.options = { panel: "auto", animate: true, shadow: true, historyLimit: 200, headingLevel: 2, ...clean(options) };
     this.labels = { ...DEFAULT_LABELS, ...clean(options.labels ?? {}) };
     this.root = this.options.shadow ? (host.shadowRoot ?? host.attachShadow({ mode: "open" })) : host;
     this._els = new Map();        // node id → button
@@ -409,6 +409,13 @@ export class Atlas extends EventTarget {
     else this._paint(false);
   }
 
+  /** A heading tag `depth` levels below `headingLevel` (lane titles and the detail's title are at it,
+   *  the detail's "Incoming" and "Outgoing" one below), so the map fits the page's outline. */
+  _heading(depth) {
+    const level = Math.min(6, Math.max(1, Math.round(Number(this.options.headingLevel) || 2) + depth));
+    return `h${level}`;
+  }
+
   /** The focused element inside the map's root (shadow root or host). */
   _active() {
     const a = this.root instanceof ShadowRoot ? this.root.activeElement : document.activeElement;
@@ -457,7 +464,7 @@ export class Atlas extends EventTarget {
     const bandEl = (band, kind) => {
       const sec = el("section", `band ${kind}`);
       sec.dataset.lane = band.id;
-      const title = txt("h3", "lane-title", band.title ?? "");
+      const title = txt(this._heading(0), "lane-title", band.title ?? "");
       const spacer = el("div", `channel ch-${kind === "before" ? "ca" : "cz"}`);
       const list = el("ol", "nodes");
       const ids = L.order.get(band.id);
@@ -521,7 +528,7 @@ export class Atlas extends EventTarget {
       const sec = el("section", "lane");
       sec.dataset.lane = lane.id;
       const track = reversed ? 2 * (N - 1 - k) + 2 : 2 * k + 2;
-      const title = txt("h3", "lane-title", lane.id === M.UNASSIGNED ? this.labels.unassigned : (lane.title ?? ""));
+      const title = txt(this._heading(0), "lane-title", lane.id === M.UNASSIGNED ? this.labels.unassigned : (lane.title ?? ""));
       const list = el("ol", "nodes");
       if (vertical) {
         sec.style.gridRow = `${track}`;
@@ -707,7 +714,7 @@ export class Atlas extends EventTarget {
     const lane = [L.before, ...L.flow, L.after].find(l => l && l.id === laneId);
     const kids = [];
     const p = txt("p", "p-lane", laneId === M.UNASSIGNED ? this.labels.unassigned : (lane?.title ?? ""));
-    const h = txt("h3", "", n.title ?? n.id);
+    const h = txt(this._heading(0), "p-title", n.title ?? n.id);
     kids.push(p, h);
     const sub = this._live.get(id)?.subtitle ?? n.subtitle;
     if (sub) kids.push(txt("p", "p-sub", sub));
@@ -720,7 +727,7 @@ export class Atlas extends EventTarget {
       if (!edges.length) return;
       const box = el("div", "rel");
       box.dataset.dir = dir;
-      const t = el("h4");
+      const t = el(this._heading(1), "r-title");
       t.textContent = dir === "in" ? this.labels.incoming : this.labels.outgoing;
       const ul = el("ul");
       for (const e of edges) {
