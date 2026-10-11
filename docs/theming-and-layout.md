@@ -112,7 +112,8 @@ narrower containers.
 
 In the stacked arrangement the connections of the selected node are listed in its detail, as
 buttons that jump to the other node. The two-column bands (before and after the flow) keep two
-nodes per row, and the detail opens under the pair.
+nodes per row; the selected node and its detail take a whole row, and its neighbour moves to fill
+the next gap.
 
 `panel: false` (or `panel="false"` on the element) hides the panel in every arrangement.
 

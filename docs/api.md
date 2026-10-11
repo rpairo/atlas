@@ -33,7 +33,8 @@ Options left out or set to `undefined` keep their defaults.
 | `historyLimit` | number | `200` | Most undo steps kept. |
 | `shadow` | boolean | `true` | Render into a shadow root. With `false` Atlas renders into the element itself and its stylesheet applies to the whole page; keep the default unless you need to. |
 
-The default labels are `Incoming`, `Outgoing`, `Unassigned` and `Feeds back into itself`. A page in
+The default labels are `Incoming`, `Outgoing`, `Unassigned`, `Feeds back into itself`, `Map` (board)
+and `Detail` (detail). A page in
 another language passes its own:
 
 ```js
@@ -53,7 +54,7 @@ new Atlas(el, { document: board, labels: { incoming: "Entradas", outgoing: "Sali
 | `rev` | number | Revision, increased by every load, edit, undo and redo. |
 | `warnings` | findings | Warnings of the current board (see [Board format](board-format.md#errors-and-warnings)). |
 | `canUndo`, `canRedo` | boolean | |
-| `labels` | object | The interface texts in use. Changes show the next time the panel is filled. |
+| `labels` | object | The interface texts in use. Changes show at the next redraw (a selection or an edit). |
 
 ### Loading and editing
 
@@ -91,7 +92,7 @@ step, animates the change and fires `change`. Editing methods return the new rev
 | `select(id, { focus, animate })` | Selects a node (or clears the selection with `null`), draws its wires and fills the panel. `focus` (default `true`) moves keyboard focus to it. |
 | `setState(id, { subtitle, status })` | Live content that never moves anything: replaces the subtitle shown (not the one in the board) and sets a status. `status` must match `[a-z0-9_-]{1,32}` and becomes the CSS part `status-<value>`. `null` clears either. |
 | `settle()` | Finishes running transitions at once and redraws the wires. Useful before measuring or taking a screenshot. |
-| `destroy()` | Stops observing, cancels animations and empties the element. Final: `destroyed` turns true and the instance draws nothing more. |
+| `destroy()` | Stops observing, cancels animations and empties its root (the shadow root, or the element with `shadow: false`). Final: `destroyed` turns true and the instance draws nothing more. |
 
 ### Custom node content
 
@@ -227,7 +228,7 @@ every editing method. `error.errors` lists every problem as
 
 ### Placement and routing (experimental)
 
-`layout(model, { optimize })`, `bestInsertion(model, nodeId)`, `inversions(before, after)`,
+`layout(model, { optimize })`, `bestInsertion(model, nodeId, near)`, `inversions(before, after)`,
 `route(selected, edges, geometry)`, `demand(…)` and `ROUTE` expose the engine's internals: where
 every node goes, and how the wires of one selection run through the corridors. They are useful for
 tests and tools, but their shapes may change in any minor release.

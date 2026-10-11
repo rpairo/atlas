@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { normalize, validate, load, parse, apply, serialize, diff, AtlasError, LIMITS } from "../src/model.js";
+import { layout } from "../src/layout.js";
 
 const example = JSON.parse(readFileSync(new URL("../examples/incident-response/board.json", import.meta.url)));
 
@@ -216,4 +217,114 @@ test("removing a top-level group leaves its subgroups without a parent, not with
   const { model } = load({ lanes: [{ id: "L" }], groups: [{ id: "G" }, { id: "H", parent: "G" }], nodes: [{ id: "a", lane: "L", group: "H" }] });
   const m = apply(model, { op: "removeGroup", id: "G" }).model;
   assert.ok(!("parent" in m.groups[0]));
+});
+
+// ---------------------------------------------------------------------------------------------
+// Hostile input: whatever value sits in whatever field, load() and apply() either work or throw
+// AtlasError; never a TypeError from inside.
+
+const WEIRD = [null, true, 0, -1, 1e308, "", "x", [], [null], {}, { toString: 0 }, { toString: 0, valueOf: 0 }, ["a"], { id: "a" }];
+
+const richBoard = () => ({
+  format: "atlas/1",
+  meta: { title: "t", selected: "a", direction: "right", lang: "en", ordered: true },
+  lanes: [{ id: "L", title: "L" }, { id: "B", kind: "before", title: "B" }],
+  groups: [{ id: "G", title: "G" }, { id: "H", parent: "G" }],
+  nodes: [{ id: "a", lane: "L", group: "H", title: "A", subtitle: "s", details: ["d"], type: "x", pinned: true }, { id: "b", lane: "L" }, { id: "c", lane: "B" }],
+  edges: [{ id: "e1", from: "a", to: "b", label: "l", details: "why", type: "t" }, { from: "b", to: "c" }],
+  constraints: [{ type: "before", a: "a", b: "b" }, { type: "first", node: "a" }],
+  edgeTypes: { t: {} }, nodeTypes: { x: {} },
+});
+
+function leafPaths(v, path = []) {
+  if (v === null || typeof v !== "object") return [path];
+  const out = [path];
+  for (const k of Object.keys(v)) out.push(...leafPaths(v[k], [...path, k]));
+  return out;
+}
+
+function setAt(obj, path, value) {
+  if (!path.length) return value;
+  const copy = structuredClone(obj);
+  let o = copy;
+  for (const k of path.slice(0, -1)) o = o[k];
+  o[path[path.length - 1]] = value;
+  return copy;
+}
+
+test("any value in any field of a board loads or is refused with AtlasError", () => {
+  const base = richBoard();
+  const bad = [];
+  for (const path of leafPaths(base)) for (const value of WEIRD) {
+    const board = setAt(base, path, value);
+    try { load(board); } catch (e) { if (e.name !== "AtlasError") bad.push(`${path.join(".")} = ${JSON.stringify(value)}: ${e.name}: ${e.message}`); }
+  }
+  assert.deepEqual(bad.slice(0, 5), []);
+});
+
+test("any value in any field of an operation applies or is refused with AtlasError", () => {
+  const { model } = load(richBoard());
+  const before = JSON.stringify(model);
+  const ops = [
+    { op: "addNode", node: { id: "n", lane: "L", title: "N" }, index: 0 }, { op: "updateNode", id: "a", changes: { title: "T", details: ["x"] } },
+    { op: "moveNode", id: "a", lane: "L", index: 1 }, { op: "removeNode", id: "b" }, { op: "renameNode", from: "a", to: "z" },
+    { op: "addEdge", edge: { from: "a", to: "c", label: "l" } }, { op: "updateEdge", id: "e1", changes: { label: "m" } }, { op: "removeEdge", id: "e1" },
+    { op: "addLane", lane: { id: "M", title: "M" }, index: 1 }, { op: "updateLane", id: "L", changes: { title: "T" } }, { op: "moveLane", id: "L", index: 1 },
+    { op: "removeLane", id: "L", moveTo: null }, { op: "addGroup", group: { id: "K" } }, { op: "updateGroup", id: "G", changes: { title: "T" } },
+    { op: "removeGroup", id: "G" }, { op: "addConstraint", constraint: { type: "last", node: "b" } }, { op: "removeConstraint", index: 0 },
+    { op: "setMeta", changes: { title: "T" } },
+  ];
+  const bad = [];
+  for (const op of ops) for (const path of leafPaths(op).filter(p => p.length && p[0] !== "op")) for (const value of WEIRD) {
+    const o = setAt(op, path, value);
+    try { apply(model, o); } catch (e) { if (e.name !== "AtlasError") bad.push(`${op.op} ${path.join(".")} = ${JSON.stringify(value)}: ${e.name}: ${e.message}`); }
+  }
+  assert.deepEqual(bad.slice(0, 5), []);
+  assert.equal(JSON.stringify(model), before, "apply() never changes the model it was given");
+});
+
+test("a node cannot be both first and last of a lane", () => {
+  const b = { lanes: [{ id: "L" }], nodes: [{ id: "a", lane: "L" }, { id: "b", lane: "L" }], constraints: [{ type: "first", node: "a" }, { type: "last", node: "a" }] };
+  assert.throws(() => load(b), e => e.errors.some(x => x.code === "conflict"));
+});
+
+test("without flow lanes, constraints follow the computed layers", () => {
+  // a → b puts them in different layers: two "first" constraints do not clash, and a "before"
+  // between layers is reported by the placement, not refused as if they shared a lane.
+  const b = { nodes: [{ id: "a" }, { id: "b" }, { id: "c" }], edges: [{ from: "a", to: "b" }, { from: "a", to: "c" }], constraints: [{ type: "first", node: "a" }, { type: "first", node: "b" }, { type: "before", a: "a", b: "c" }] };
+  const { model, warnings } = load(b);
+  assert.deepEqual(warnings, []);
+  const L = layout(model);
+  assert.ok(L.warnings.some(w => w.code === "cross-lane"), JSON.stringify(L.warnings));
+  const same = load({ nodes: [{ id: "a" }, { id: "b" }], constraints: [{ type: "first", node: "a" }, { type: "first", node: "b" }] }).model;
+  assert.ok(layout(same).warnings.some(w => w.code === "conflict"));
+});
+
+test("null is not a board; numbers out of range and oversized objects are refused", () => {
+  assert.throws(() => load(null), e => e.name === "AtlasError" && e.errors[0].code === "type");
+  assert.doesNotThrow(() => load(undefined));
+  assert.throws(() => load('{"nodes":[{"id":"a","weight":1e400}]}'), e => e.name === "AtlasError" && e.errors[0].code === "json");
+  const huge = { nodes: [{ id: "a", title: "x".repeat(1999) }], filler: "y".repeat(LIMITS.bytes) };
+  assert.throws(() => load(huge), e => e.name === "AtlasError" && e.errors[0].code === "too-large");
+});
+
+test("renaming never gives an edge the id another edge has", () => {
+  const { model } = load({ nodes: [{ id: "a" }, { id: "b" }, { id: "x" }], edges: [{ from: "a", to: "b" }, { id: "c->b", from: "x", to: "b" }] });
+  const m = apply(model, { op: "renameNode", from: "a", to: "c" }).model;
+  assert.deepEqual(m.edges.map(e => e.id).sort(), ["c->b", "c->b#1"]);
+});
+
+test("an operation's payload is copied: changing it afterwards does not change the board", () => {
+  const { model } = load({ nodes: [{ id: "a" }] });
+  const details = ["one"];
+  const m = apply(model, { op: "updateNode", id: "a", changes: { details } }).model;
+  details.push("added later by the caller");
+  assert.deepEqual(m.nodes[0].details, ["one"]);
+});
+
+test("saving twice gives the same text, also after a field falls back to its default", () => {
+  let { model } = load({ meta: { title: "T" }, lanes: [{ id: "L", kind: "before" }], nodes: [{ id: "a", lane: "L" }] });
+  model = apply(model, [{ op: "updateLane", id: "L", changes: { kind: null } }, { op: "setMeta", changes: { direction: null } }]).model;
+  const once = JSON.stringify(serialize(model));
+  assert.equal(JSON.stringify(serialize(load(once).model)), once);
 });

@@ -7,8 +7,9 @@ file, an API response, another team's repository.
 
 - **No HTML from the data.** Every text of a board is inserted with `textContent`, never as HTML.
   No URL or CSS value is taken from the data. The only attributes that carry data are `data-lane`
-  (a validated id) and the part names made from `type` and `status`, which must match a strict
-  pattern first (`[A-Za-z0-9_-]{1,32}` and `[a-z0-9_-]{1,32}`).
+  (a validated id), `aria-label` (the board's `meta.title`, set as an attribute value, never
+  parsed), `data-status` and the part names made from `type` and `status`, which must match a
+  strict pattern first (`[A-Za-z0-9_-]{1,32}` and `[a-z0-9_-]{1,32}`).
 - **No prototype pollution.** JSON text is parsed without letting `__proto__`, `constructor` or
   `prototype` keys through, and those names are refused as ids.
 - **Bounded work.** Documents over 512 KB and boards over the [limits](board-format.md#limits)

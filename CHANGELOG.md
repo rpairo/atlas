@@ -7,6 +7,48 @@ public API is.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-11
+
+A second review: the browser audit now also runs in Firefox and WebKit, and property-based tests
+(thousands of random boards and edits, hostile values in every field) found the rest.
+
+### Fixed
+
+- In Safari (WebKit) some rows of the board were taller than their content (90 px for 72 px) and
+  changed between renders: measuring the board's minimum width briefly set the live board to
+  `min-content`, and WebKit kept rows sized for that narrow layout. The width is measured on a
+  hidden copy; the result is the same in Chrome, Firefox and WebKit.
+- `load()` and `apply()` threw a `TypeError` instead of `AtlasError` for values such as an object
+  whose `toString` is not a function, an object as an index, or `changes` that is not an object (a
+  string used to add fields such as `"0"` to a node). Every operation's arguments are checked
+  first, and messages show any value safely.
+- `addNode()` could still move existing nodes when a constraint drew a lane in another order than
+  its document. The lane's document order becomes its drawn order before the node goes in.
+- A node both `first` and `last` of a lane with other nodes was accepted, and every constraint of
+  that lane was then dropped. It is a `conflict` error.
+- On a board without flow lanes, constraints were checked as if every node shared one lane named
+  `unassigned`. They are checked against the layers the placement computes, and reported as
+  warnings (`cross-lane`, `conflict`) when they cannot hold there.
+- `load(null)` returned an empty board; it is refused, as documented. Numbers out of range (`1e400`)
+  are refused instead of saving as `null`. A board passed as an object has the same 512 KB limit
+  and prototype-key protection as JSON text.
+- An operation's payload is copied: changing the caller's object afterwards no longer changes the
+  board.
+- Renaming a node no longer fails, or gives an edge an id another edge has, when a derived id is
+  already taken; it takes the next free `#n`.
+- Saving twice gives the same text after a lane kind or a direction fell back to its default.
+
+### Changed
+
+- Firefox 110+ is enough (`:has()`, `Object.hasOwn` and `??=` are not used). The README states the
+  real minimums and what is tested.
+- `meta.lang` has the same 2,000-character limit in the schema as in `validate()`.
+
+### Added
+
+- `scripts/audit-browsers.mjs`: the browser audit in Firefox and WebKit through Playwright; CI runs
+  it on every pull request.
+
 ## [0.3.0] - 2026-10-11
 
 Fixes from an independent review (every one with a test that failed before) and a few additions.
@@ -133,6 +175,7 @@ Not published. Fixes found by embedding Atlas in a host page.
 Not published. First version: the `atlas/1` format with validation and edit operations, placement,
 orthogonal routing, the `Atlas` class and the `<atlas-map>` element, single-file builds and tests.
 
-[Unreleased]: https://github.com/rpairo/atlas/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/rpairo/atlas/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/rpairo/atlas/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/rpairo/atlas/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/rpairo/atlas/releases/tag/v0.2.0

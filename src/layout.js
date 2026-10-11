@@ -39,7 +39,7 @@ export function layout(model, options = {}) {
 
   const slots = balance(lanes, order, adjacency);
   const edgeClass = classifyEdges(model, lanes.laneOfNode, rank);
-  const warnings = splitGroups(model, order);
+  const warnings = [...constraintWarnings(model, lanes, order), ...splitGroups(model, order)];
 
   return {
     direction: model.meta.direction,
@@ -56,6 +56,37 @@ export function layout(model, options = {}) {
     groups: groupSpans(model, order, slots.slot, nodes),
     warnings,
   };
+}
+
+/**
+ * Constraints on nodes in computed layers (no flow lanes declared): validate() cannot know the
+ * layers, so the conflicts it would report for lanes are reported here, as warnings, and those
+ * constraints are ignored.
+ */
+function constraintWarnings(model, lanes, order) {
+  if (lanes.mode !== "auto") return [];
+  const out = [];
+  const layer = id => lanes.laneOfNode.get(id);
+  const auto = lane => typeof lane === "string" && lane.startsWith(AUTO);
+  const seen = { first: new Map(), last: new Map() };
+  model.constraints.forEach((c, i) => {
+    const p = `constraints[${i}]`;
+    if (c.type === "before") {
+      const la = layer(c.a), lb = layer(c.b);
+      if ((auto(la) || auto(lb)) && la !== lb) out.push({ path: p, code: "cross-lane", message: `"${c.a}" and "${c.b}" are in different layers; ignored` });
+    } else if (auto(layer(c.node))) {
+      const lane = layer(c.node), other = c.type === "first" ? "last" : "first";
+      if (seen[c.type].has(lane)) out.push({ path: p, code: "conflict", message: `the layer of "${c.node}" already has a "${c.type}" node (${seen[c.type].get(lane)}); ignored` });
+      else if (seen[other].get(lane) === c.node && order.get(lane).length > 1) out.push({ path: p, code: "conflict", message: `"${c.node}" cannot be both first and last of its layer; ignored` });
+      else seen[c.type].set(lane, c.node);
+    }
+  });
+  // "before" constraints that form a cycle inside a layer cannot all hold: the layer keeps its order.
+  const compiled = compileConstraints(model, lanes.laneOfNode);
+  for (const [lane, c] of compiled) if (auto(lane) && !satisfies(order.get(lane), c)) {
+    out.push({ path: "constraints", code: "conflict", message: `the constraints of a computed layer cannot all hold (a cycle of "before"); it keeps its order` });
+  }
+  return out;
 }
 
 /** Groups whose members, in some lane, have other nodes between them (constraints put them there). */
@@ -222,8 +253,11 @@ function compileConstraints(model, laneOfNode) {
       const la = laneOfNode.get(c.a);
       if (la !== undefined && la === laneOfNode.get(c.b)) get(la).before.push([c.a, c.b]);
     } else if (c.type === "first" || c.type === "last") {
+      // The first constraint of each kind wins, and a node cannot be both: in computed layers
+      // validate() cannot see these conflicts, layout() reports them (constraintWarnings).
       const lane = laneOfNode.get(c.node);
-      if (lane !== undefined) get(lane)[c.type] = c.node;
+      const at = lane === undefined ? null : get(lane);
+      if (at && at[c.type] === null && at[c.type === "first" ? "last" : "first"] !== c.node) at[c.type] = c.node;
     }
   }
   return byLane;
