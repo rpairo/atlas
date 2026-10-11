@@ -1,4 +1,4 @@
-/*! Atlas 0.2.0 | MIT | https://github.com/rpairo/atlas */
+/*! Atlas 0.3.0 | MIT | https://github.com/rpairo/atlas */
 (function () {
 "use strict";
 const __modules = {};
@@ -3107,5 +3107,5 @@ if (typeof customElements !== "undefined") defineElement();
 return { Atlas, AtlasMap, define, FORMAT, LIMITS, AtlasError, parse, normalize, validate, load, apply, serialize, diff, layout, bestInsertion, inversions, route, demand, ROUTE };
 })();
 
-globalThis.Atlas = Object.assign(__modules.index.Atlas, { ...__modules.index, VERSION: "0.2.0" });
+globalThis.Atlas = Object.assign(__modules.index.Atlas, { ...__modules.index, VERSION: "0.3.0" });
 })();
