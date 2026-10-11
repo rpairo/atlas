@@ -55,6 +55,7 @@ try {
     for (const [nid, r] of boxes) {
       if (r.left < B.left - 1 || r.right > B.right + 1) res.stack.push(`${id}: ${nid} outside the board`);
       if (r.width < (B.width - 40) * 0.4) res.stack.push(`${id}: ${nid} too narrow (${Math.round(r.width)} of ${Math.round(B.width)})`);
+      if (nid !== "(panel)" && r.height > 200) res.stack.push(`${id}: ${nid} stretched to ${Math.round(r.height)}px`);
     }
     for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) {
       const [a, ra] = boxes[i], [b, rb] = boxes[j];
