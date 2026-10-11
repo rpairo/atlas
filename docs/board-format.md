@@ -110,7 +110,7 @@ edges.
 | `from`, `to` | node ids, required | Direction of the connection. |
 | `id` | edge id | Optional. Without one, an edge gets `from->to`, then `from->to#1`, `#2`… for repeats. Allowed characters: letters, digits, `_ . : # > -`, up to 141. |
 | `label` | string | Shown next to the connected node in the detail panel. |
-| `details` | string | Kept in the board; the built-in panel does not show it yet. |
+| `details` | string | Why the relation exists. The detail panel shows it under the related node. |
 | `type` | string | Kept in the board. If `edgeTypes` is not empty and does not contain it, a warning is reported. |
 
 Atlas classifies every edge by the order of the lanes, bands included (before band, flow lanes,

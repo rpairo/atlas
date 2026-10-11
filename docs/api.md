@@ -27,9 +27,10 @@ Options left out or set to `undefined` keep their defaults.
 | `document` | object or JSON text | none | The board to load. Without it the map starts empty; call `load()` later. |
 | `selected` | node id | `meta.selected` | Node selected at start. |
 | `panel` | `"auto"` or `false` | `"auto"` | `false` hides the detail panel. |
-| `labels` | object | English | Interface texts: `{ incoming, outgoing, unassigned, selfLoop }`. |
+| `labels` | object | English | Interface texts: `{ incoming, outgoing, unassigned, selfLoop, board, detail }`. `board` names the board for screen readers when it has no `meta.title`; `detail` names the detail panel. |
 | `renderNode` | function | none | `(node, button, live) => void`: replaces the content of each node. See [Custom node content](#custom-node-content). |
 | `animate` | boolean | `true` | Trace wires when a node is selected. |
+| `historyLimit` | number | `200` | Most undo steps kept. |
 | `shadow` | boolean | `true` | Render into a shadow root. With `false` Atlas renders into the element itself and its stylesheet applies to the whole page; keep the default unless you need to. |
 
 The default labels are `Incoming`, `Outgoing`, `Unassigned` and `Feeds back into itself`. A page in
@@ -73,14 +74,15 @@ step, animates the change and fires `change`. Editing methods return the new rev
 | `disconnect(id)` / `disconnect({ from, to })` | Removes an edge by id, or the first edge from `from` to `to`; throws if there is none. |
 | `addLane(lane, { index })`, `updateLane(id, changes)`, `moveLane(id, index)` | Lanes and bands. |
 | `removeLane(id, { moveTo })` | Removes a lane. Its nodes move to `moveTo`, or lose their lane. |
-| `addGroup(group)`, `removeGroup(id)` | Removing a group moves its members and subgroups to its parent. |
+| `addGroup(group)`, `updateGroup(id, changes)`, `removeGroup(id)` | Removing a group moves its members and subgroups to its parent. |
 | `addConstraint(constraint)`, `removeConstraint(index)` | See [Constraints](board-format.md#constraints). |
 | `pin(id, { lane, index })`, `unpin(id)` | Optionally moves the node, then marks it `pinned` so `reorderAll()` leaves it in place. |
 | `setMeta(changes)` | Merges into `meta` (for example `{ direction: "down" }`). |
 | `reorderAll({ dryRun })` | Reorders every lane for the fewest crossings, keeping pinned nodes in place. Returns `{ swaps }`, the number of node pairs that change places; with `dryRun: true` it only counts them. |
-| `batch(fn)` | Runs several edits as one undo step: `map.batch(m => { m.addNode(…); m.connect(…); })`. The batch object offers `addNode`, `connect`, `removeNode`, `updateNode`, `moveNode`, `apply` and `disconnect` (which takes an edge id only). |
+| `batch(fn)` | Runs several edits as one undo step: `map.batch(m => { m.addNode(…); m.connect(…); })`. The batch object offers `addNode`, `connect`, `removeNode`, `updateNode`, `moveNode`, `updateEdge`, `addLane`, `updateLane`, `addGroup`, `updateGroup`, `addConstraint`, `setMeta`, `apply` and `disconnect` (which takes an edge id only); each returns the batch, so calls chain. |
 | `apply(ops)` | Applies raw [operations](#operations) as one step. |
-| `undo()`, `redo()` | Return `false` when there is nothing to undo or redo. Undo restores the exact previous document. The history keeps 200 steps. |
+| `undo()`, `redo()` | Return `false` when there is nothing to undo or redo. Undo restores the exact previous document. The history keeps 200 steps (`historyLimit`). An edit that changes nothing is not a step. |
+| `clearHistory()` | Forgets every undo and redo step, for example once the board is saved. |
 
 ### Viewing
 

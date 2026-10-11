@@ -151,7 +151,8 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .rel button { display: grid; gap: 1px; width: 100%; min-width: 0; text-align: start; background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 7px 10px; cursor: pointer; }
 .rel button:hover { border-color: var(--ink-2); }
 .rel .rt { font-weight: 600; font-size: 13.5px; }
-.rel .rw { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; }
+.rel .rd { font-size: 12px; color: var(--ink-2); line-height: 1.4; overflow-wrap: anywhere; }
+.rel .rw { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; overflow-wrap: anywhere; }
 .status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* Stacked: lanes one after another, no wires, the detail opens under the node. Every grid of the

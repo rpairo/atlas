@@ -1802,7 +1802,8 @@ svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: v
 .rel button { display: grid; gap: 1px; width: 100%; min-width: 0; text-align: start; background: transparent; border: 1px solid var(--rule); border-radius: 4px; padding: 7px 10px; cursor: pointer; }
 .rel button:hover { border-color: var(--ink-2); }
 .rel .rt { font-weight: 600; font-size: 13.5px; }
-.rel .rw { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; }
+.rel .rd { font-size: 12px; color: var(--ink-2); line-height: 1.4; overflow-wrap: anywhere; }
+.rel .rw { font-size: 12.5px; color: var(--ink-2); line-height: 1.4; overflow-wrap: anywhere; }
 .status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* Stacked: lanes one after another, no wires, the detail opens under the node. Every grid of the
@@ -1871,6 +1872,8 @@ const DEFAULT_LABELS = {
   outgoing: "Outgoing",
   unassigned: "Unassigned",
   selfLoop: "Feeds back into itself",
+  board: "Map",       // accessible name of the board when the board has no meta.title
+  detail: "Detail",   // accessible name of the detail panel
 };
 
 class Atlas extends EventTarget {
@@ -1888,7 +1891,7 @@ class Atlas extends EventTarget {
   constructor(host, options = {}) {
     super();
     this.host = host;
-    this.options = { panel: "auto", animate: true, shadow: true, ...clean(options) };
+    this.options = { panel: "auto", animate: true, shadow: true, historyLimit: 200, ...clean(options) };
     this.labels = { ...DEFAULT_LABELS, ...clean(options.labels ?? {}) };
     this.root = this.options.shadow ? (host.shadowRoot ?? host.attachShadow({ mode: "open" })) : host;
     this._els = new Map();        // node id → button
@@ -2032,6 +2035,7 @@ class Atlas extends EventTarget {
   moveLane(id, index) { return this.apply({ op: "moveLane", id, index }); }
   removeLane(id, { moveTo } = {}) { return this.apply({ op: "removeLane", id, moveTo }); }
   addGroup(group) { return this.apply({ op: "addGroup", group }); }
+  updateGroup(id, changes) { return this.apply({ op: "updateGroup", id, changes }); }
   removeGroup(id) { return this.apply({ op: "removeGroup", id }); }
   addConstraint(constraint) { return this.apply({ op: "addConstraint", constraint }); }
   removeConstraint(index) { return this.apply({ op: "removeConstraint", index }); }
@@ -2079,6 +2083,8 @@ class Atlas extends EventTarget {
     this._swap(next);
     return true;
   }
+  /** Forgets every undo and redo step (for example once the board is saved). */
+  clearHistory() { this._history = []; this._future = []; }
   get canUndo() { return this._history.length > 0; }
   get canRedo() { return this._future.length > 0; }
 
@@ -2135,7 +2141,7 @@ class Atlas extends EventTarget {
     // An edit that changes nothing (same title, empty list of operations) makes no undo step.
     if (after === before || JSON.stringify(M.serialize(after)) === JSON.stringify(M.serialize(before))) return;
     this._history.push(before);
-    if (this._history.length > 200) this._history.shift();
+    while (this._history.length > this.options.historyLimit) this._history.shift();
     this._future = [];
     this._model = after;
     this._warnings = warnings ?? [];
@@ -2170,6 +2176,7 @@ class Atlas extends EventTarget {
     this._boardWrap = el("div", "board-wrap");
     this._board = el("div", "board");
     this._board.setAttribute("part", "board");
+    this._board.setAttribute("role", "region");
     this._svg = document.createElementNS(NS, "svg");
     this._svg.setAttribute("class", "wires");
     this._svg.setAttribute("aria-hidden", "true");
@@ -2206,6 +2213,8 @@ class Atlas extends EventTarget {
 
   _render({ animate = false, diff = null, long = false } = {}) {
     if (this._destroyed) return;
+    this._board.setAttribute("aria-label", this._model.meta.title || this.labels.board);
+    this._panel.setAttribute("aria-label", this.labels.detail);
     // The selection follows the board: a node that is gone (removed, renamed by undo, another board
     // loaded) is no longer selected, and listeners hear it.
     const lost = this._selected !== null && !this._model.nodes.some(n => n.id === this._selected);
@@ -2542,6 +2551,7 @@ class Atlas extends EventTarget {
         const target = this._model.nodes.find(x => x.id === other(e));
         b.append(txt("span", "rt", target?.title ?? other(e)));
         if (e.label) b.append(txt("span", "rw", e.label));
+        if (e.details) b.append(txt("span", "rd", e.details));
         b.addEventListener("click", () => this.select(other(e)));
         li.append(b);
         ul.append(li);
@@ -2839,6 +2849,13 @@ class Batch {
   updateNode(id, changes) { return this.apply({ op: "updateNode", id, changes }); }
   moveNode(id, opts = {}) { return this.apply({ op: "moveNode", id, ...opts }); }
   disconnect(id) { return this.apply({ op: "removeEdge", id }); }
+  updateEdge(id, changes) { return this.apply({ op: "updateEdge", id, changes }); }
+  addLane(lane, { index } = {}) { return this.apply({ op: "addLane", lane, index }); }
+  updateLane(id, changes) { return this.apply({ op: "updateLane", id, changes }); }
+  addGroup(group) { return this.apply({ op: "addGroup", group }); }
+  updateGroup(id, changes) { return this.apply({ op: "updateGroup", id, changes }); }
+  addConstraint(constraint) { return this.apply({ op: "addConstraint", constraint }); }
+  setMeta(changes) { return this.apply({ op: "setMeta", changes }); }
 }
 
 // -----------------------------------------------------------------------------------------------

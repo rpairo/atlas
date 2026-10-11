@@ -271,6 +271,31 @@ try {
     map.load(JSON.stringify({ meta: { selected: "solo" }, nodes: [{ id: "solo", title: "Solo" }] }), { selected: null });
     if (map.selected !== null) res.behaviour.push(`load with { selected: null } selected ${map.selected}`);
   } catch (e) { res.behaviour.push(`state check threw ${e.name}: ${e.message}`); }
+  // Additions: accessible names, edge details in the detail, history limits, more edits in batch().
+  try {
+    map.load(JSON.stringify({ meta: { title: "Audit board" }, lanes: [{ id: "L" }], nodes: [{ id: "p1", lane: "L" }, { id: "p2", lane: "L" }] }));
+    const name = map._board.getAttribute("aria-label"), role = map._board.getAttribute("role");
+    if (role !== "region" || name !== "Audit board") res.behaviour.push(`the board is not a region named after its title (${role}, ${name})`);
+    const [ea, eb] = ["p1", "p2"];
+    map.connect(ea, eb, { id: "audit_why", details: "because of the audit" });
+    map.select(eb, { focus: false, animate: false });
+    const panelEl = map.root.querySelector(".panel");
+    if (!panelEl.getAttribute("aria-label")) res.behaviour.push("the detail panel has no accessible name");
+    if (![...panelEl.querySelectorAll(".rd")].some(x => x.textContent === "because of the audit")) res.behaviour.push("edge details are not shown in the detail");
+    map.undo();
+    const before2 = JSON.stringify(map.toJSON());
+    map.batch(b => { b.addLane({ id: "audit_lane", title: "Audit" }); b.setMeta({ title: "Audit title" }); b.addConstraint({ type: "first", node: ea }); });
+    map.undo();
+    if (JSON.stringify(map.toJSON()) !== before2) res.behaviour.push("a batch of lane, meta and constraint edits is not one undo step");
+    map.clearHistory();
+    if (map.canUndo || map.canRedo) res.behaviour.push("clearHistory() left steps");
+    const host4 = document.createElement("div"); document.body.append(host4);
+    const m4 = new Atlas(host4, { document: { nodes: [{ id: "a" }] }, animate: false, historyLimit: 2 });
+    for (let i = 0; i < 5; i++) m4.updateNode("a", { title: "t" + i });
+    let undos = 0; while (m4.undo()) undos++;
+    if (undos !== 2) res.behaviour.push(`historyLimit 2 kept ${undos} steps`);
+    m4.destroy(); host4.remove();
+  } catch (e) { res.behaviour.push(`additions check threw ${e.name}: ${e.message}`); }
   const rejections = [];
   addEventListener("unhandledrejection", e => rejections.push(String(e.reason?.message ?? e.reason)));
   const host2 = document.createElement("div");

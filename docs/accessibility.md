@@ -5,11 +5,16 @@ they say is also in the document as text and buttons.
 
 ## Structure
 
+- The board is a region named after `meta.title` (or the `board` label), and the detail panel is
+  named by the `detail` label, so screen-reader users can jump between them.
 - Lanes and bands are sections with their titles as headings.
 - Nodes are native `<button>` elements, in reading order lane by lane. The selected node has
   `aria-pressed="true"`.
 - The detail panel repeats the node's lane, title, subtitle and details, and lists its incoming
-  and outgoing connections as buttons that move the selection to the other node.
+  and outgoing connections (with their label and details) as buttons that move the selection to
+  the other node.
+- Each text follows its own direction (`dir="auto"`), so Arabic or Hebrew titles read right to
+  left; the board's geometry stays left to right on a right-to-left page.
 - When a node is selected, a polite live region announces its title and how many connections it
   has in each direction, using the `labels` of the map (for example "Triage: 5 incoming,
   2 outgoing").
@@ -32,7 +37,15 @@ The arrows follow the screen, so they mean the same in every direction of the fl
 and in the stacked arrangement. The browser audit presses every arrow on every node and checks that
 the focus always moves the way of the arrow.
 
-Moving the focus does not select: the wires and the panel change only when you select.
+Moving the focus does not select: the wires and the panel change only when you select. The view
+scrolls so that the focused node is on screen and clear of the detail panel when it sits below
+the board. When the focused node is removed, the focus moves to another node of the map instead of
+the page.
+
+## Contrast
+
+While a node is selected, the others step back with a paper background and the secondary ink,
+which keeps their text at 4.5:1 or more in both themes (WCAG 1.4.3) and keeps them usable.
 
 ## Motion
 
