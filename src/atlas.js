@@ -122,7 +122,7 @@ export class Atlas extends EventTarget {
     this._live.clear();
     this._rev++;
     this._render({ animate: false });
-    const first = selected ?? m.meta.selected ?? null;
+    const first = selected === undefined ? (m.meta.selected ?? null) : selected;
     this.select(first && m.nodes.some(n => n.id === first) ? first : null, { focus: false, animate: this.options.animate });
     this._emit("change", { rev: this._rev, diff: null, warnings });
     return this;
@@ -151,10 +151,7 @@ export class Atlas extends EventTarget {
   }
   updateNode(id, changes) { return this.apply({ op: "updateNode", id, changes }); }
   moveNode(id, { lane, index } = {}) { return this.apply({ op: "moveNode", id, lane, index }); }
-  removeNode(id) {
-    if (this._selected === id) this._selected = null;
-    return this.apply({ op: "removeNode", id });
-  }
+  removeNode(id) { return this.apply({ op: "removeNode", id }); }
   renameNode(from, to) {
     // The element stays the same node on screen: it glides (if anything), never fades out and in.
     const swapKey = (map, a, b) => { if (map.has(a)) { map.set(b, map.get(a)); map.delete(a); } };
@@ -165,15 +162,18 @@ export class Atlas extends EventTarget {
       this._idOf.set(this._els.get(b), b);
     };
     const moved = this._els.has(from) && !this._els.has(to);
+    const selected = this._selected === from;
     if (moved) rekey(from, to);
+    if (selected) this._selected = to;
     let rev;
     try {
       rev = this.apply({ op: "renameNode", from, to });
     } catch (e) {
       if (moved) rekey(to, from);   // the edit was refused: the screen keeps the old id
+      if (selected) this._selected = from;
       throw e;
     }
-    if (this._selected === from) this.select(to, { focus: false });
+    if (selected) this._emit("select", { id: to });
     return rev;
   }
   connect(from, to, { id, label, details, type } = {}) {
@@ -270,17 +270,25 @@ export class Atlas extends EventTarget {
     this._paint(false);
   }
 
+  /** Frees the map: observers, frames and animations stop and the content is removed. Final: a
+   *  destroyed instance draws nothing more; create a new one to show a board again. */
   destroy() {
+    this._destroyed = true;
     this._ro?.disconnect();
     cancelAnimationFrame(this._frame);
-    this._animations.forEach(a => a.cancel());
+    const running = this._animations;
+    this._animations = [];          // a transition's end callback sees it is no longer current
+    running.forEach(a => a.cancel());
     this.root.replaceChildren();
   }
+  get destroyed() { return this._destroyed === true; }
 
   // -------------------------------------------------------------------------------------------
   // Internals: commit, history
 
   _commit(before, after, warnings, { long = false } = {}) {
+    // An edit that changes nothing (same title, empty list of operations) makes no undo step.
+    if (after === before || JSON.stringify(M.serialize(after)) === JSON.stringify(M.serialize(before))) return;
     this._history.push(before);
     if (this._history.length > 200) this._history.shift();
     this._future = [];
@@ -298,7 +306,6 @@ export class Atlas extends EventTarget {
     this._warnings = M.validate(model).warnings;
     this._rev++;
     const d = M.diff(before, model);
-    if (this._selected && !model.nodes.some(n => n.id === this._selected)) this._selected = null;
     this._render({ animate: true, diff: d });
     this._emit("change", { rev: this._rev, diff: d, warnings: this._warnings });
   }
@@ -336,6 +343,7 @@ export class Atlas extends EventTarget {
   }
 
   _schedule() {
+    if (this._destroyed) return;
     cancelAnimationFrame(this._frame);
     this._frame = requestAnimationFrame(() => {
       this._applyMode();
@@ -352,6 +360,13 @@ export class Atlas extends EventTarget {
   // DOM: render the layout
 
   _render({ animate = false, diff = null, long = false } = {}) {
+    if (this._destroyed) return;
+    // The selection follows the board: a node that is gone (removed, renamed by undo, another board
+    // loaded) is no longer selected, and listeners hear it.
+    const lost = this._selected !== null && !this._model.nodes.some(n => n.id === this._selected);
+    if (lost) this._selected = null;
+    const active = this._active();
+    const hadFocus = active !== null && this._board.contains(active);
     const motion = animate && !reducedMotion();
     this._animations.forEach(a => a.finish());
     this._animations = [];
@@ -368,9 +383,21 @@ export class Atlas extends EventTarget {
     this._highlight();
     this._fillPanel();
     this._placePanel();
+    // Focus was on a node that is gone: keep it in the map, on the node that holds the tab stop.
+    if (hadFocus && !this._board.contains(this._active())) {
+      this._ensureTabStop();
+      [...this._els.values()].find(b => b.tabIndex === 0)?.focus({ preventScroll: true });
+    }
+    if (lost) { this._emit("select", { id: null }); this._announce(""); }
 
     if (motion && first) this._transition(first, diff, long);
     else this._paint(false);
+  }
+
+  /** The focused element inside the map's root (shadow root or host). */
+  _active() {
+    const a = this.root instanceof ShadowRoot ? this.root.activeElement : document.activeElement;
+    return a ?? null;
   }
 
   /** Abstract positions (before measuring) used to size corridors: u = lane, v = slot. */
@@ -402,7 +429,7 @@ export class Atlas extends EventTarget {
     this._wrap.dataset.direction = dir;
     const board = this._board;
     const keep = new Set(this._model.nodes.map(n => n.id));
-    for (const [id, li] of this._items) if (!keep.has(id)) { li.remove(); this._items.delete(id); this._els.delete(id); }
+    for (const [id, li] of this._items) if (!keep.has(id)) { li.remove(); this._items.delete(id); this._els.delete(id); this._live.delete(id); }
 
     const size = (c, min) => Math.max(min, corridorSize(need.tracks.get(c) ?? 0, c[0] === "g" ? "g" : "c"));
     const gutters = Array.from({ length: N + 1 }, (_, k) => size("g" + k, k === 0 || k === N ? MIN_OUTER : MIN_GUTTER));
@@ -750,6 +777,7 @@ export class Atlas extends EventTarget {
   }
 
   _paint(animate) {
+    if (this._destroyed) return;
     this._svg.replaceChildren();
     this._wires = [];
     if (!this._layout || this._selected === null || !this._flowMode()) return;
